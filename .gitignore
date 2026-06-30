@@ -28,6 +28,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+server/venv/
 
 # Environment Variables
 .env
@@ -67,3 +68,15 @@ client/build/
 ehthumbs.db
 Thumbs.db
 
+# =========================
+# VaultMind Generated Data
+# =========================
+Testing_data_v3/
+server/data/Testing_data/*.csv
+server/data/Testing_data/*.json
+server/evidence_output/
+server/models/*.pkl
+server/models/*.joblib
+server/models/*.pt
+server/models/*.pth
+server/models/*.bak

@@ -4,6 +4,8 @@ import logging
 import math
 import asyncio
 from datetime import datetime
+from fastapi import BackgroundTasks
+from core.notifier import send_fraud_alert
 
 # ==========================================
 # IMPORTING ALL 8 VAULTMIND AGENTS
@@ -38,7 +40,8 @@ class MasterOrchestrator:
         Records volume to Redis historical state.
         """
         employee_id = transaction.get("emp_id", transaction.get("employee_id", "UNKNOWN"))
-        amount = transaction.get("amount", 0.0)
+        amount_val = transaction.get("amount")
+        amount = float(amount_val) if amount_val is not None else 0.0
         
         # ── 0. Update Historical State in Redis ──
         historical_state.update_user_volume(employee_id, float(amount))
@@ -110,12 +113,12 @@ class MasterOrchestrator:
 
         # Weights based on Architecture Doc
         weights = {
-            "BehaviourWatch": 0.25,
-            "FundFlow": 0.25,
-            "VendorGuard": 0.10,
-            "ComplaintSignal": 0.10,
-            "NetworkIntel": 0.20,
-            "RegulatoryAI": 0.10
+            "BehaviourWatch": 0.45,
+            "FundFlow": 0.02,
+            "VendorGuard": 0.05,
+            "ComplaintSignal": 0.01,
+            "NetworkIntel": 0.02,
+            "RegulatoryAI": 0.45
         }
 
         # Calculate Unified CBSI
@@ -171,6 +174,13 @@ class MasterOrchestrator:
         elif final_cbsi >= 50:
             decision = "MONITOR"
             risk_level = "MEDIUM"
+
+        if final_cbsi > 70:
+            tasks = BackgroundTasks()
+            from core.notifier import send_fraud_alert, send_sms_alert
+            tasks.add_task(send_fraud_alert, transaction, final_cbsi)
+            tasks.add_task(send_sms_alert, transaction, final_cbsi)
+            asyncio.create_task(tasks())  # Execute the background tasks asynchronously
 
         response = {
             "transaction_id": transaction.get("transaction_id", "UNKNOWN"),

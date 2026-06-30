@@ -282,6 +282,7 @@ class BehaviourWatch:
         login_hour       = int(transaction.get("login_hour", 9))
         login_hour       = max(0, min(23, login_hour))
         records_accessed = float(transaction.get("records_accessed", 50.0))
+        employee_cibil_score = int(transaction.get("employee_cibil_score", 750))
 
         # ── NEW: Compute all 3 velocity features ─────────────────────────
         amount_vs_user_avg   = _compute_amount_vs_user_avg(amount, transaction)
@@ -306,6 +307,8 @@ class BehaviourWatch:
 
             if ml_score >= 0:   # Model loaded and returned valid score
                 cbsi   = int(min(100, max(0, round(ml_score))))
+                if employee_cibil_score < 600:
+                    cbsi = min(100, cbsi + 15)
                 signal = self._resolve_signal(cbsi, 0.0, 0.0, 0.0)
                 reason = (
                     f"[ML-PREDICTED] XGBoost fraud probability: "
@@ -347,6 +350,8 @@ class BehaviourWatch:
             WEIGHT_DWELL   * risk_dwell
         )
         cbsi   = int(min(100, max(0, round(cbsi_raw))))
+        if employee_cibil_score < 600:
+            cbsi = min(100, cbsi + 15)
         signal = self._resolve_signal(cbsi, z_amount, z_dwell, risk_offhours)
         reason = self._build_reason(
             cbsi=cbsi, emp_class=emp_class, amount=amount,

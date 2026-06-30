@@ -1,0 +1,9 @@
+{
+  "generated_at": "2026-07-01T02:14:47",
+  "total_rows": 600,
+  "historical_rows": 200,
+  "live_rows": 400,
+  "fraud_total": 54,
+  "fraud_pattern": "Every 11th transaction (after 10 normal)",
+  "live_fraud_count": 36
+}
