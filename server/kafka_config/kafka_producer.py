@@ -50,8 +50,8 @@ def stream_data():
                     producer.send(TOPIC_NAME, transaction)
                 print(f"[STREAM] Sent Tx: {transaction.get('transaction_id', 'UNKNOWN')} | Acc: {transaction.get('source_account', 'N/A')}")
                 
-                # Simulate real-time delay (1.5 seconds per transaction)
-                time.sleep(1.5)
+                # Simulate real-time delay (0.3 seconds per transaction for faster demo)
+                time.sleep(0.3)
             
     except FileNotFoundError:
         print(f"[ERROR] Could not find {CSV_FILE}. Please make sure the dataset exists.")
