@@ -154,27 +154,14 @@ export default function App() {
       }
     };
     fetchEvidence();
-    const subscription = supabase
-      .channel('evidence_logs_changes')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'evidence_logs' }, payload => {
-        const log = payload.new;
-        const newEvd = {
-          id: log.id || `EVD-${Math.random()}`,
-          emp_id: log.employee_id || "UNKNOWN",
-          filename: log.evidence_path ? log.evidence_path.split('/').pop() : `EVD-${log.transaction_id}.pdf`,
-          hash: log.id ? `0x${log.id.replace(/-/g, '').slice(0, 16)}` : "0x000000",
-          blockId: `#${log.transaction_id ? String(log.transaction_id).substring(0,8) : "0000"}`,
-          timestamp: new Date(log.created_at).toISOString().replace("T", " ").slice(0, 19) + "Z",
-          status: "Generated",
-          risk: log.risk_level
-        };
-        setNewEvidenceIds(prev => new Set([...prev, newEvd.id]));
-        setTimeout(() => setNewEvidenceIds(prev => { const n = new Set(prev); n.delete(newEvd.id); return n; }), 3000);
-        setVaultEvidence(prev => [newEvd, ...prev]);
-        setEvidencePage(1);
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(subscription); };
+    // Supabase Realtime WebSocket disabled to prevent connection overload
+    // const subscription = supabase
+    //   .channel('evidence_logs_changes')
+    //   .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'evidence_logs' }, payload => {
+    //     // ... logic skipped ...
+    //   })
+    //   .subscribe();
+    // return () => { supabase.removeChannel(subscription); };
   }, []);
 
   useEffect(() => {
