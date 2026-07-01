@@ -95,14 +95,11 @@ def authenticate_user(email: str, password: str) -> Optional[dict]:
     user = get_user_from_supabase(email)
     
     # HARDCODED FALLBACK FOR DEMO IF DB IS DOWN
-    if not user and email == "admin@vaultmind.com" and password == "admin":
-        return {
-            "email": "admin@vaultmind.com",
-            "role": "admin",
-            "name": "VaultMind Admin"
-        }
-        
     if not user:
+        if email == "analyst@ubi.com" and password == "analyst123":
+            return {"email": email, "role": "analyst", "name": "Analyst (Read-Only)"}
+        elif email == "auditor@ubi.com" and password == "auditor123":
+            return {"email": email, "role": "auditor", "name": "Auditor (Full Action)"}
         return None
     
     # Enforce bcrypt verification
