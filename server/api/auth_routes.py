@@ -79,7 +79,8 @@ async def login(request: Request, payload: LoginRequest):
         value=token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
+        domain=".vaultmind.systems",
         max_age=3600  # 1 hour
     )
     
