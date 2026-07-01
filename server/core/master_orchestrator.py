@@ -176,11 +176,9 @@ class MasterOrchestrator:
             risk_level = "MEDIUM"
 
         if final_cbsi > 70:
-            tasks = BackgroundTasks()
             from core.notifier import send_fraud_alert, send_sms_alert
-            tasks.add_task(send_fraud_alert, transaction, final_cbsi)
-            tasks.add_task(send_sms_alert, transaction, final_cbsi)
-            asyncio.create_task(tasks())  # Execute the background tasks asynchronously
+            asyncio.create_task(send_fraud_alert(transaction, final_cbsi))
+            asyncio.create_task(send_sms_alert(transaction, final_cbsi))
 
         response = {
             "transaction_id": transaction.get("transaction_id", "UNKNOWN"),

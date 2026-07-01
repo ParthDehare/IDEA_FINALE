@@ -25,7 +25,7 @@ async def send_fraud_alert(transaction: dict, score: int):
     """)
     
     msg['Subject'] = f"CRITICAL FRAUD ALERT - Score {score} - {transaction.get('emp_id')}"
-    msg['From'] = "alerts@vaultmind.local"
+    msg['From'] = os.getenv("SMTP_USER", "alerts@vaultmind.local")
     msg['To'] = auditor_email
     
     try:
