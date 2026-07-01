@@ -95,15 +95,20 @@ def mock_device_ip(branch_id: str) -> str:
 class EvidenceBuilder:
     def __init__(self):
         self.agent_name = "EvidenceBuilder (Agent 7)"
-        self.output_dir = 'evidence_output/pdf_reports'
-        self.chain_dir = 'evidence_output/blockchain_chain'
-        self.str_dir = 'evidence_output/str_reports'
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.output_dir = os.path.join(base, 'evidence_output', 'pdf_reports')
+        self.chain_dir  = os.path.join(base, 'evidence_output', 'blockchain_chain')
+        self.str_dir    = os.path.join(base, 'evidence_output', 'str_reports')
         
         SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
         SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
-        if SUPABASE_URL and SUPABASE_KEY:
-            self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        else:
+        try:
+            if SUPABASE_URL and SUPABASE_KEY:
+                self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+            else:
+                self.supabase = None
+        except Exception as e:
+            print(f"[EvidenceBuilder] Supabase init failed (non-critical): {e}")
             self.supabase = None
         
         for d in [self.output_dir, self.chain_dir, self.str_dir]:
@@ -111,6 +116,7 @@ class EvidenceBuilder:
             
         self.chain_file = os.path.join(self.chain_dir, "evidence_chain.json")
         self.chain = self._load_chain()
+
 
     def _load_chain(self):
         if os.path.exists(self.chain_file):
