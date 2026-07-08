@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c 'import ast,sys *)",
+      "Bash(venv/Scripts/python.exe -c \"import fastapi, confluent_kafka, slowapi, xgboost, sklearn, redis; print\\('deps OK'\\)\")",
+      "Bash(py -0p)",
+      "Bash(\"/c/Program Files/Python311/python\" --version)",
+      "Bash(rm -rf venv)",
+      "Bash(\"/c/Program Files/Python311/python\" -m venv venv)",
+      "Bash(venv/Scripts/python.exe -m pip install --upgrade pip -q)",
+      "Bash(venv/Scripts/python.exe -m pip install -r requirements.txt -q)",
+      "Read(//Users/dev/workspace-70fd4be2/H:/CODE/IDEA_FINALE/client/src/**)",
+      "Read(//h//**)",
+      "Read(//mnt/**)",
+      "Bash(sed -n '1,80p' apiService.js)",
+      "Bash(sed -n '1,80p' authStore.js)",
+      "Bash(sed -n '1,60p' data.js)"
+    ]
+  }
+}

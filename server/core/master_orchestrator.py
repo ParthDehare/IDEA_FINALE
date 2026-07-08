@@ -4,6 +4,8 @@ import logging
 import math
 import asyncio
 from datetime import datetime
+from fastapi import BackgroundTasks
+from core.notifier import send_fraud_alert
 
 # ==========================================
 # IMPORTING ALL 8 VAULTMIND AGENTS
@@ -20,6 +22,8 @@ from core.db_connections import supabase_db, redis_db
 from core.historical_state import historical_state
 
 class MasterOrchestrator:
+    recent_transactions = []
+
     def __init__(self):
         print("[INIT] Initializing VaultMind Agents...")
         self.a1_behaviour = BehaviourWatch()
@@ -38,7 +42,8 @@ class MasterOrchestrator:
         Records volume to Redis historical state.
         """
         employee_id = transaction.get("emp_id", transaction.get("employee_id", "UNKNOWN"))
-        amount = transaction.get("amount", 0.0)
+        amount_val = transaction.get("amount")
+        amount = float(amount_val) if amount_val is not None else 0.0
         
         # ── 0. Update Historical State in Redis ──
         historical_state.update_user_volume(employee_id, float(amount))
@@ -78,6 +83,9 @@ class MasterOrchestrator:
                 agent_flags="DeceptionGuard"
             )
             # ------------------------------------------------------
+            from core.notifier import send_fraud_alert, send_sms_alert
+            asyncio.create_task(send_fraud_alert(transaction, 100))
+            asyncio.create_task(send_sms_alert(transaction, 100))
 
             if "employee_id" in final_response and "emp_id" not in final_response:
                 final_response["emp_id"] = final_response["employee_id"]
@@ -110,12 +118,12 @@ class MasterOrchestrator:
 
         # Weights based on Architecture Doc
         weights = {
-            "BehaviourWatch": 0.25,
-            "FundFlow": 0.25,
-            "VendorGuard": 0.10,
-            "ComplaintSignal": 0.10,
-            "NetworkIntel": 0.20,
-            "RegulatoryAI": 0.10
+            "BehaviourWatch": 0.45,
+            "FundFlow": 0.02,
+            "VendorGuard": 0.05,
+            "ComplaintSignal": 0.01,
+            "NetworkIntel": 0.02,
+            "RegulatoryAI": 0.45
         }
 
         # Calculate Unified CBSI
@@ -172,6 +180,11 @@ class MasterOrchestrator:
             decision = "MONITOR"
             risk_level = "MEDIUM"
 
+        if final_cbsi >= 70:
+            from core.notifier import send_fraud_alert, send_sms_alert
+            asyncio.create_task(send_fraud_alert(transaction, final_cbsi))
+            asyncio.create_task(send_sms_alert(transaction, final_cbsi))
+
         response = {
             "transaction_id": transaction.get("transaction_id", "UNKNOWN"),
             "cbsi_score": final_cbsi,
@@ -212,8 +225,103 @@ class MasterOrchestrator:
                 return None
             return obj
             
-        return clean_nans(final_response)
+        cleaned_res = clean_nans(final_response)
+        MasterOrchestrator.recent_transactions.append(cleaned_res)
+        if len(MasterOrchestrator.recent_transactions) > 500:
+            MasterOrchestrator.recent_transactions.pop(0)
+            
+        return cleaned_res
     
+    async def score_transaction_only(self, transaction: dict) -> dict:
+        """
+        Scores a transaction through DeceptionGuard + the 6 standard agents and
+        returns the same shape as process_transaction(), but WITHOUT any side
+        effects (no Redis alert push, no evidence generation, no email/SMS
+        notification, no Supabase writes, no historical_state.stats mutation).
+
+        Used to batch-score historical warmup data for dashboard-init without
+        spamming alerts for hundreds of rows that already happened in the past.
+        """
+        a8_result = self.a8_deception.evaluate(transaction)
+        if a8_result['severity_index'] == 100:
+            response = {
+                "transaction_id": transaction.get("transaction_id", "UNKNOWN"),
+                "cbsi_score": 100,
+                "decision": "ISOLATE",
+                "dominant_agent": "DeceptionGuard",
+                "reason": a8_result['reason'],
+            }
+            return {**transaction, **response}
+
+        results_list = await asyncio.gather(
+            asyncio.to_thread(self.a1_behaviour.evaluate, transaction),
+            asyncio.to_thread(self.a2_fundflow.evaluate, transaction),
+            asyncio.to_thread(self.a3_vendor.evaluate, transaction),
+            asyncio.to_thread(self.a4_complaint.evaluate, transaction),
+            asyncio.to_thread(self.a5_network.evaluate, transaction),
+            asyncio.to_thread(self.a6_regulatory.evaluate, transaction),
+        )
+
+        results = dict(zip(
+            ["BehaviourWatch", "FundFlow", "VendorGuard", "ComplaintSignal", "NetworkIntel", "RegulatoryAI"],
+            results_list
+        ))
+
+        weights = {
+            "BehaviourWatch": 0.45,
+            "FundFlow": 0.02,
+            "VendorGuard": 0.05,
+            "ComplaintSignal": 0.01,
+            "NetworkIntel": 0.02,
+            "RegulatoryAI": 0.45
+        }
+
+        highest_score = 0
+        dominant_agent = "None"
+        dominant_reason = "Transaction Normal"
+        weighted_sum = 0.0
+        total_weight = 0.0
+        agent_scores = {}
+
+        for agent_name, res in results.items():
+            score = res.get('severity_index', 0)
+            agent_scores[agent_name] = score
+            weight = weights[agent_name]
+            weighted_sum += (score * weight)
+            total_weight += weight
+            if score > highest_score:
+                highest_score = score
+                dominant_agent = agent_name
+                dominant_reason = res.get('reason', 'Unknown anomaly')
+
+        final_cbsi = int(min(100, (weighted_sum / total_weight)))
+
+        decision = "PASS"
+        if final_cbsi >= 80:
+            decision = "ISOLATE"
+        elif final_cbsi >= 50:
+            decision = "MONITOR"
+
+        response = {
+            "transaction_id": transaction.get("transaction_id", "UNKNOWN"),
+            "cbsi_score": final_cbsi,
+            "decision": decision,
+            "dominant_agent": dominant_agent,
+            "reason": dominant_reason,
+            "all_scores": agent_scores,
+        }
+
+        def clean_nans(obj):
+            if isinstance(obj, dict):
+                return {k: clean_nans(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [clean_nans(v) for v in obj]
+            elif isinstance(obj, float) and math.isnan(obj):
+                return None
+            return obj
+
+        return clean_nans({**transaction, **response})
+
     def get_latest_processed_transaction(self):
         """Returns the latest processed transaction/alert for the UI poll endpoint."""
         if hasattr(self, "in_memory_alerts") and self.in_memory_alerts:

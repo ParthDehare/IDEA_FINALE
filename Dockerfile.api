@@ -1,7 +1,10 @@
-FROM python:3.10-slim
+FROM python:3.10-slim-bullseye
 WORKDIR /app
-COPY server/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ENV PIP_NO_INDEX=1
+ENV PIP_FIND_LINKS=/packages
+COPY packages/ /packages/
+COPY server/requirements-docker.txt .
+RUN pip install --no-cache-dir -r requirements-docker.txt --no-index --find-links=/packages
 COPY server/ .
 EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

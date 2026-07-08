@@ -1,0 +1,6 @@
+client/node_modules
+mobile/node_modules
+server/venv
+server/__pycache__
+mobile/.expo
+.git
