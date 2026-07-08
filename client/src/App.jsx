@@ -1106,13 +1106,13 @@ export default function App() {
                             }}
                             onClick={() => { setProfileSearch(tx.emp_id); setPage("profile"); }}
                           >
-                            <div className="flex justify-between items-center">
-                              <div className="flex items-center gap-1">
-                                <span className="font-bold font-mono text-[10px]" style={{ color: t.red }}>{tx?.emp_id || "N/A"}</span>
-                                <span className="text-[9px] text-gray-500 font-mono">|</span>
-                                <span className="text-[9px] font-bold tracking-wide font-mono text-gray-400 uppercase">{tx?.action_type || "N/A"}</span>
+                            <div className="flex justify-between items-center gap-2">
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                <span className="font-bold font-mono text-[10px] shrink-0" style={{ color: t.red }}>{tx?.emp_id || "N/A"}</span>
+                                <span className="text-[9px] text-gray-500 font-mono shrink-0">|</span>
+                                <span className="text-[9px] font-bold tracking-wide font-mono text-gray-400 uppercase truncate min-w-0">{tx?.action_type || "N/A"}</span>
                               </div>
-                              <span className="px-2 py-0.5 rounded-full text-[8px] font-mono font-bold text-white flex items-center gap-1 shadow-sm"
+                              <span className="px-2 py-0.5 rounded-full text-[8px] font-mono font-bold text-white flex items-center gap-1 shadow-sm shrink-0"
                                     style={{ background: t.red }}>
                                 CRITICAL <span className="font-black">{tx.cbsi}</span>
                               </span>
@@ -1193,28 +1193,28 @@ export default function App() {
                         return (
                           <div 
                             key={tx.transaction_id}
-                            className="p-3 rounded-xl flex items-center justify-between cursor-pointer hover:bg-opacity-80 transition-all duration-200 border"
+                            className="p-3 rounded-xl flex items-center justify-between gap-2 cursor-pointer hover:bg-opacity-80 transition-all duration-200 border"
                             style={{ 
                               background: t.cardAlt,
                               borderColor: t.border
                             }}
                             onClick={() => { setProfileSearch(tx.emp_id); setPage("profile"); }}
                           >
-                            <div className="flex items-center gap-2">
-                              <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: dotColor }} />
-                              <span className="font-bold font-mono text-[10px]" style={{ color: t.text }}>
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <span className="w-1.5 h-1.5 rounded-full animate-pulse shrink-0" style={{ background: dotColor }} />
+                              <span className="font-bold font-mono text-[10px] shrink-0" style={{ color: t.text }}>
                                 {tx?.emp_id || "N/A"}
                               </span>
-                              <span className="text-[9px] text-gray-500 font-semibold font-mono uppercase">
+                              <span className="text-[9px] text-gray-500 font-semibold font-mono uppercase truncate min-w-0">
                                 {tx?.action_type || "N/A"}
                               </span>
                             </div>
                             
-                            <div className="flex items-center gap-2.5">
-                              <span className="text-[10px] font-bold font-mono" style={{ color: amountColor }}>
-                                Rs.{(tx?.amount || 0).toLocaleString()}
+                            <div className="flex items-center gap-2.5 shrink-0">
+                              <span className="text-[10px] font-bold font-mono shrink-0" style={{ color: amountColor }}>
+                                ₹{(tx?.amount || 0).toLocaleString()}
                               </span>
-                              <span className="text-[9px] font-bold font-mono" style={{ color: scoreColor }}>
+                              <span className="text-[9px] font-bold font-mono shrink-0" style={{ color: scoreColor }}>
                                 {tx.cbsi}
                               </span>
                             </div>
