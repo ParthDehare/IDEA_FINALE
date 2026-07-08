@@ -141,7 +141,7 @@ export default function App() {
   const [syncInterval, setSyncInterval] = useState(15);
   const [enableSlackAlerts, setEnableSlackAlerts] = useState(true);
   const [enableEmailAlerts, setEnableEmailAlerts] = useState(false);
-  const [slackWebhookUrl, setSlackWebhookUrl] = useState("https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX");
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState("https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_BOT/TOKEN");
   const [selectedModelWeight, setSelectedModelWeight] = useState("Balanced");
 
   const showToast = useCallback((msg) => {
@@ -290,16 +290,18 @@ export default function App() {
           .order('created_at', { ascending: false });
         if (error) throw error;
         if (data) {
-          const formattedData = data.map(log => ({
-            id: log.id || `EVD-${Math.random()}`,
-            emp_id: log.employee_id || "UNKNOWN",
-            filename: log.evidence_path ? log.evidence_path.split('/').pop() : `EVD-${log.transaction_id}.pdf`,
-            hash: log.id ? `0x${log.id.replace(/-/g, '').slice(0, 16)}` : "0x000000",
-            blockId: `#${log.transaction_id ? String(log.transaction_id).substring(0,8) : "0000"}`,
-            timestamp: new Date(log.created_at).toISOString().replace("T", " ").slice(0, 19) + "Z",
-            status: "Generated",
-            risk: log.risk_level
-          }));
+          const formattedData = data
+            .filter(log => log.evidence_path !== "Not Required" && log.evidence_path !== "None")
+            .map(log => ({
+              id: log.id || `EVD-${Math.random()}`,
+              emp_id: log.employee_id || "UNKNOWN",
+              filename: log.evidence_path ? log.evidence_path.split('/').pop() : `EVD-${log.transaction_id}.pdf`,
+              hash: log.id ? `0x${log.id.replace(/-/g, '').slice(0, 16)}` : "0x000000",
+              blockId: `#${log.transaction_id ? String(log.transaction_id).substring(0,8) : "0000"}`,
+              timestamp: new Date(log.created_at).toISOString().replace("T", " ").slice(0, 19) + "Z",
+              status: "Generated",
+              risk: log.risk_level
+            }));
           setVaultEvidence(formattedData);
         }
       } catch (err) {

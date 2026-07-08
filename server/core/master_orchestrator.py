@@ -202,8 +202,8 @@ class MasterOrchestrator:
         self.update_redis_cbsi(employee_id, final_cbsi)
         self.push_alert_to_redis(final_response)
 
-        # --- 🗄️ SUPABASE TRIGGER (Save Audit Log Only For Anomalies) ---
-        if risk_level in ["HIGH", "MEDIUM"]:
+        # --- 🗄️ SUPABASE TRIGGER (Save Audit Log Only For High Risk / Generated PDFs) ---
+        if risk_level == "HIGH" and evidence != "Not Required":
             self.save_evidence_to_db(
                 transaction=transaction,
                 cbsi_score=final_cbsi,
