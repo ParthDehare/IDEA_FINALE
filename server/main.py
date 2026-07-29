@@ -40,7 +40,7 @@ app.include_router(feedback_router, prefix="/api")
 # Allow React to connect — explicit origin whitelist governed by secrets module
 ALLOWED_ORIGINS = secrets.get_list(
     "ALLOWED_ORIGINS",
-    default=["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"]
+    default=["https://v2.vaultmind.systems","http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"]
 )
 
 app.add_middleware(
