@@ -41,12 +41,18 @@ class MasterOrchestrator:
         Process a single transaction through all registered agents concurrently.
         Records volume to Redis historical state.
         """
+        tenant_id = transaction.get("tenant_id", "default_tenant")
+        transaction["tenant_id"] = tenant_id
+        
         employee_id = transaction.get("emp_id", transaction.get("employee_id", "UNKNOWN"))
         amount_val = transaction.get("amount")
         amount = float(amount_val) if amount_val is not None else 0.0
         
-        # ── 0. Update Historical State in Redis ──
+        # ── 0. Update Historical State & Graph Adjacency ──
         historical_state.update_user_volume(employee_id, float(amount))
+        src_acc = str(transaction.get("account_id") or transaction.get("source_account") or employee_id or "UNKNOWN")
+        dst_acc = str(transaction.get("destination_account") or "UNKNOWN")
+        historical_state.record_graph_edge(src_acc, dst_acc, float(amount))
 
         agent_scores = {}
         total_weight = 0.0
@@ -75,13 +81,14 @@ class MasterOrchestrator:
             final_response = {**transaction, **response}
             self.push_alert_to_redis(final_response)
 
-            self.save_evidence_to_db(
-                transaction=transaction,
-                cbsi_score=100,
-                risk_level="CRITICAL (KILL-SWITCH)",
-                evidence_path=evidence_path,
-                agent_flags="DeceptionGuard"
-            )
+            asyncio.create_task(asyncio.to_thread(
+                self.save_evidence_to_db,
+                transaction,
+                100,
+                "CRITICAL (KILL-SWITCH)",
+                evidence_path,
+                "DeceptionGuard"
+            ))
             # ------------------------------------------------------
             from core.notifier import send_fraud_alert, send_sms_alert
             asyncio.create_task(send_fraud_alert(transaction, 100))
@@ -147,6 +154,8 @@ class MasterOrchestrator:
                 dominant_reason = res.get('reason', 'Unknown anomaly')
 
         final_cbsi = int(min(100, (weighted_sum / total_weight)))
+        if highest_score >= 85:
+            final_cbsi = max(final_cbsi, highest_score)
 
         # Update historical stats
         historical_state.stats["transactions_scanned"] += 1
@@ -157,15 +166,10 @@ class MasterOrchestrator:
             historical_state.stats["high_risk_flags"] += 1
             
         # Graph updates
-        acc_touched = transaction.get("account_touched", "UNKNOWN")
+        acc_touched = transaction.get("account_touched") or transaction.get("account_id") or transaction.get("source_account") or "UNKNOWN"
         dst_acc = transaction.get("destination_account", "UNKNOWN")
         amt = transaction.get("amount", 0)
-        historical_state.graph_nodes.add(str(acc_touched))
-        historical_state.graph_nodes.add(str(dst_acc))
-        historical_state.graph_edges.append((str(acc_touched), str(dst_acc), amt))
-        # Keep graph size reasonable
-        if len(historical_state.graph_edges) > 50:
-            historical_state.graph_edges.pop(0)
+        historical_state.record_graph_edge(acc_touched, dst_acc, amt)
 
         # ── 3. Decision Engine ──
         decision = "PASS"
@@ -204,13 +208,14 @@ class MasterOrchestrator:
 
         # --- 🗄️ SUPABASE TRIGGER (Save Audit Log Only For High Risk / Generated PDFs) ---
         if risk_level == "HIGH" and evidence != "Not Required":
-            self.save_evidence_to_db(
-                transaction=transaction,
-                cbsi_score=final_cbsi,
-                risk_level=risk_level,
-                evidence_path=evidence,
-                agent_flags=dominant_agent
-            )
+            asyncio.create_task(asyncio.to_thread(
+                self.save_evidence_to_db,
+                transaction,
+                final_cbsi,
+                risk_level,
+                evidence,
+                dominant_agent
+            ))
         # ---------------------------------------------------------------
         
         if "employee_id" in final_response and "emp_id" not in final_response:
@@ -242,6 +247,9 @@ class MasterOrchestrator:
         Used to batch-score historical warmup data for dashboard-init without
         spamming alerts for hundreds of rows that already happened in the past.
         """
+        tenant_id = transaction.get("tenant_id", "default_tenant")
+        transaction["tenant_id"] = tenant_id
+        
         a8_result = self.a8_deception.evaluate(transaction)
         if a8_result['severity_index'] == 100:
             response = {
@@ -295,6 +303,8 @@ class MasterOrchestrator:
                 dominant_reason = res.get('reason', 'Unknown anomaly')
 
         final_cbsi = int(min(100, (weighted_sum / total_weight)))
+        if highest_score >= 85:
+            final_cbsi = max(final_cbsi, highest_score)
 
         decision = "PASS"
         if final_cbsi >= 80:
@@ -350,39 +360,58 @@ class MasterOrchestrator:
         historical_state.recent_alerts.insert(0, alert_data)
         historical_state.recent_alerts = historical_state.recent_alerts[:50]
         
-        if redis_db is None: return
+        def clean(obj):
+            import math
+            if isinstance(obj, float) and math.isnan(obj): return None
+            if isinstance(obj, dict): return {k: clean(v) for k, v in obj.items()}
+            if isinstance(obj, list): return [clean(v) for v in obj]
+            return obj
+            
+        clean_data = clean(alert_data)
+        
+        if redis_db is None:
+            try:
+                # We dynamically import broadcast from main.py to send alerts directly
+                import main
+                if hasattr(main, "broadcast_to_websockets"):
+                    asyncio.create_task(main.broadcast_to_websockets(clean_data))
+            except Exception as e:
+                import logging
+                logging.error(f"[Fallback WS Send Error] {e}")
+            return
+            
         try:
-            def clean(obj):
-                if isinstance(obj, float) and math.isnan(obj): return None
-                if isinstance(obj, dict): return {k: clean(v) for k, v in obj.items()}
-                if isinstance(obj, list): return [clean(v) for v in obj]
-                return obj
-                
-            clean_data = clean(alert_data)
-            redis_db.lpush("live_alerts", json.dumps(clean_data))
+            payload_str = json.dumps(clean_data)
+            redis_db.lpush("live_alerts", payload_str)
             redis_db.ltrim("live_alerts", 0, 49)  # Keep only 50
+            redis_db.publish("vaultmind:alerts", payload_str)
         except Exception as e:
-            logging.error(f"[Redis Alert Push Error] {e}")
+            import logging
+            logging.error(f"[Redis Alert Push/Publish Error] {e}")
         
     def save_evidence_to_db(self, transaction, cbsi_score, risk_level, evidence_path, agent_flags):
-        if supabase_db is None:
+        tenant_id = str(transaction.get("tenant_id", "default_tenant"))
+        from core.db_connections import get_tenant_supabase_client
+        scoped_db = get_tenant_supabase_client(tenant_id) or supabase_db
+        if scoped_db is None:
             print("⚠️ [DB] Supabase not connected. Skipping DB insert.")
             return
 
-        # Prepare payload matching the Supabase 'evidence_logs' table schema
+        # Prepare payload matching the Supabase 'evidence_logs' table schema with multi-tenant isolation
         data = {
             "transaction_id": str(transaction.get("transaction_id", "UNKNOWN")),
             "employee_id": str(transaction.get("emp_id", transaction.get("employee_id", "UNKNOWN"))), 
             "cbsi_score": float(cbsi_score),
             "risk_level": str(risk_level),
             "evidence_path": str(evidence_path),
-            "agent_flags": str(agent_flags)
+            "agent_flags": str(agent_flags),
+            "tenant_id": tenant_id
         }
         
         try:
-            # Execute database insertion command
-            response = supabase_db.table("evidence_logs").insert(data).execute()
-            logging.info(f"✅ [Audit Log] Saved evidence to Supabase DB for TXN: {data['transaction_id']}")
+            # Execute database insertion command with RLS x-tenant-id header
+            response = scoped_db.table("evidence_logs").insert(data).execute()
+            logging.info(f"✅ [Audit Log] Saved evidence to Supabase DB (Tenant: {tenant_id}) for TXN: {data['transaction_id']}")
         except Exception as e:
             logging.error(f"🔴 [DB Insert Error]: Failed to save to Supabase. Details: {e}")
 

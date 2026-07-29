@@ -31,8 +31,15 @@ import { fetchWithAuth, API_BASE } from './apiService';
 
 import { GraphSkeleton } from "./components/GraphSkeleton.jsx";
 import { EnforcementMatrix } from "./components/EnforcementMatrix.jsx";
-import { ProfileTabs } from "./components/ProfileTabs.jsx";
 import { Toast } from "./components/Toast.jsx";
+import { useWebSocketAlerts } from "./hooks/useWebSocketAlerts.js";
+import { DashboardView } from "./views/DashboardView.jsx";
+import { RosterView } from "./views/RosterView.jsx";
+import { ProfileView } from "./views/ProfileView.jsx";
+import { EvidenceView } from "./views/EvidenceView.jsx";
+import { DeceptionView } from "./views/DeceptionView.jsx";
+import { ReportsView } from "./views/ReportsView.jsx";
+import { SettingsView } from "./views/SettingsView.jsx";
 
 // Splits `items` into `numBuckets` cumulative prefixes (by arrival order) and reduces each with `reducer`.
 // Real growth-over-time trend derived from actual data — no fabricated points.
@@ -123,7 +130,6 @@ export default function App() {
 
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
-  const [wsConnected, setWsConnected] = useState(false);
   const [honeypotAccounts, setHoneypotAccounts] = useState([]);
   const [activeFraudAlert, setActiveFraudAlert] = useState(null);
 
@@ -512,63 +518,14 @@ export default function App() {
   }, [normalizeTransaction]);
 
 
-  useEffect(() => {
-    if (!autoRefresh || !isAuthenticated) return;
-    let ws;
-    let reconnectTimeout;
-    let isMounted = true;
-
-    const connect = () => {
-      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      const isDevServer = isLocal && window.location.port !== '' && window.location.port !== '80';
-      // If on port 80 (Docker/Nginx), route WS through Nginx proxy on same host
-      const wsHost = isDevServer ? 'localhost:8000' : (isLocal ? window.location.host : (import.meta.env.VITE_API_DOMAIN || 'api.vaultmind.systems'));
-      const wsProto = isLocal ? 'ws:' : 'wss:';
-      ws = new WebSocket(`${wsProto}//${wsHost}/ws/alerts`);
-      ws.onopen = () => {
-        if (!isMounted) { ws.close(); return; }
-        console.log("🟢 Connected to WebSocket for live alerts");
-        setWsConnected(true);
-      };
-      ws.onmessage = (event) => {
-        try {
-          const newTxn = JSON.parse(event.data);
-          const normalized = normalizeTransaction(newTxn);
-          if (normalized) {
-            setScoredTxns((prev) => [...(Array.isArray(prev) ? prev : []), normalized].slice(-MAX_TRANSACTIONS));
-            if (normalized.cbsi >= 70) {
-              setActiveFraudAlert(normalized);
-            }
-          }
-        } catch (err) {
-          console.error("Error processing WebSocket message", err);
-        }
-      };
-      ws.onerror = (err) => console.error("WebSocket error:", err);
-      ws.onclose = () => {
-        console.log("🔴 WebSocket disconnected");
-        setWsConnected(false);
-        if (isMounted && autoRefresh) {
-          console.log("🔄 Reconnecting in 3s...");
-          reconnectTimeout = setTimeout(connect, 3000);
-        }
-      };
-    };
-
-    connect();
-
-    return () => {
-      isMounted = false;
-      setWsConnected(false);
-      clearTimeout(reconnectTimeout);
-      if (ws) {
-        ws.onclose = null; // Prevent reconnect on intentional unmount
-        if (ws.readyState === 1) ws.close();
-        else if (ws.readyState === 0) ws.onopen = () => ws.close();
-        else ws.close();
-      }
-    };
-  }, [autoRefresh, normalizeTransaction, isAuthenticated]);
+  const { wsConnected } = useWebSocketAlerts({
+    autoRefresh,
+    isAuthenticated,
+    normalizeTransaction,
+    setScoredTxns,
+    setActiveFraudAlert,
+    MAX_TRANSACTIONS
+  });
 
   const empScores = useMemo(() => {
     const map = {};
@@ -949,17 +906,16 @@ export default function App() {
                 <Shield size={14} />
               </div>
               <div className="text-left">
-                <div className="text-[11px] font-bold leading-none transition-colors duration-300"
+                <div className="text-[11px] font-bold leading-none transition-colors duration-300 capitalize"
                      style={{ color: t.text }}>
-                  Analyst
+                  {user?.name || (user?.role ? user.role.toUpperCase() : "Analyst")}
                 </div>
-                <div className="text-[9px] mt-1 leading-none transition-colors duration-300"
+                <div className="text-[9px] mt-1 leading-none transition-colors duration-300 uppercase font-mono"
                      style={{ color: t.text2 }}>
-                  Security Team
+                  {user?.role ? `${user.role} DIVISION` : "Security Team"}
                 </div>
               </div>
             </div>
-            <ChevronDown size={12} style={{ color: t.text2 }} />
           </div>
         </div>
       </aside>
@@ -970,977 +926,76 @@ export default function App() {
         style={{ transition: "all 0.3s ease-in-out" }}
       >
         {page === "command" && (
-          <div className="space-y-6">
-            {/* Header row */}
-            <div className="flex flex-wrap gap-2 justify-between items-start">
-              <div>
-                <div className="flex items-center gap-2.5">
-                  <h1 className="text-xl lg:text-2xl font-bold font-mono tracking-tight" style={{ color: t.text }}>Command Centre</h1>
-                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-[#10b981]/15 text-[#10b981] border border-[#10b981]/25 uppercase font-mono">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse"></span>
-                    Live
-                  </span>
-                </div>
-                <p className="text-xs mt-0.5" style={{ color: t.text2 }}>Real-time Fraud Intelligence & Monitoring</p>
-              </div>
-
-              {/* Right side controls */}
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold bg-red-500/10 text-red-500 border-red-500/25">
-                <AlertCircle size={13} />
-                <span>{stats.critical} Critical Alert{stats.critical !== 1 ? "s" : ""}</span>
-              </div>
-            </div>
-
-            {/* KPI Cards Row */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 lg:gap-4">
-              {isLoadingInitial ? (
-                <LoadingShimmer t={t} />
-              ) : (
-                <>
-                  <KpiCard 
-                    title="Transactions Scanned" 
-                    value={stats.total.toLocaleString()} 
-                    color={t.accent} 
-                    t={t} 
-                    trend={trends.total.trend} 
-                    trendDirection={trends.total.direction}
-                    icon={Shield}
-                    sparkPoints={sparklines.total}
-                  />
-                  <KpiCard
-                    title="Critical Alerts"
-                    value={stats.critical}
-                    color={t.red}
-                    t={t}
-                    trend={trends.critical.trend}
-                    trendDirection={trends.critical.direction}
-                    icon={AlertTriangle}
-                    sparkPoints={sparklines.critical}
-                  />
-                  <KpiCard
-                    title="High-Risk Flags"
-                    value={stats.high}
-                    color={t.amber}
-                    t={t}
-                    trend={trends.high.trend}
-                    trendDirection={trends.high.direction}
-                    icon={TrendingUp}
-                    sparkPoints={sparklines.high}
-                  />
-                  <KpiCard
-                    title="Confirmed Fraud"
-                    value={stats.fraud}
-                    color={t.red}
-                    t={t}
-                    trend={trends.fraud.trend}
-                    trendDirection={trends.fraud.direction}
-                    icon={Lock}
-                    sparkPoints={sparklines.fraud}
-                  />
-                  <KpiCard
-                    title="Avg CBSI Score"
-                    value={stats.avg}
-                    color={t.cyan}
-                    t={t}
-                    trend={trends.avg.trend}
-                    trendDirection={trends.avg.direction}
-                    icon={Activity}
-                    sparkPoints={sparklines.avg}
-                  />
-                </>
-              )}
-            </div>
-
-            {/* Row 2: World Map & Stream lists */}
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 lg:gap-6">
-              <div className="lg:col-span-2">
-                <WorldMap 
-                  theme={theme} 
-                  t={t}
-                  scoredTxns={scoredTxns} 
-                  confirmedIncidents={confirmedIncidents}
-                  falseAlarms={falseAlarms}
-                />
-              </div>
-
-              {/* Recent Critical Alerts */}
-              <div 
-                className="border transition-all duration-300 rounded-2xl p-4 lg:p-4.5 min-h-[260px] lg:h-[330px] flex flex-col hover:translate-y-[-2px]"
-                style={{
-                  background: t.card, 
-                  borderColor: t.border,
-                  boxShadow: theme === "dark" 
-                    ? "0 10px 25px -5px rgba(0, 0, 0, 0.3), inset 0 1px 0 0 rgba(255, 255, 255, 0.03)" 
-                    : "0 4px 20px -2px rgba(0, 0, 0, 0.05)"
-                }}
-              >
-                <div className="flex justify-between items-center mb-2 flex-shrink-0">
-                  <div className="text-[11px] font-bold tracking-wider uppercase font-mono" style={{ color: t.text }}>
-                    Recent Critical Alerts
-                  </div>
-                  <button 
-                    onClick={() => setPage("evidence")}
-                    className="text-[10px] font-bold text-indigo-500 hover:text-indigo-600 transition-colors flex items-center gap-1 cursor-pointer font-mono bg-transparent border-none outline-none"
-                  >
-                    View All →
-                  </button>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto pr-1 space-y-2 mt-2">
-                  {isLoadingInitial ? (
-                    <LoadingShimmer t={t} />
-                  ) : (() => {
-                    try {
-                      const safeBuffer = Array.isArray(scoredTxns) ? scoredTxns : [];
-                      if (!safeBuffer.length) {
-                        return <div className="text-xs" style={{ color: t.text2 }}>Loading alerts...</div>;
-                      }
-                      const crits = safeBuffer.filter((x) => x.cbsi >= 70).slice(-4).reverse();
-                      if (!crits.length) return <div className="text-xs" style={{ color: t.text2 }}>No critical alerts.</div>;
-                      return crits.map((tx) => {
-                        return (
-                          <div 
-                            key={tx.transaction_id}
-                            className="p-3 rounded-xl border flex flex-col justify-between cursor-pointer hover:bg-opacity-80 transition-all duration-200"
-                            style={{ 
-                              background: t.cardAlt, 
-                              borderColor: t.border 
-                            }}
-                            onClick={() => { setProfileSearch(tx.emp_id); setPage("profile"); }}
-                          >
-                            <div className="flex justify-between items-center gap-2">
-                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                <span className="font-bold font-mono text-[10px] shrink-0" style={{ color: t.red }}>{tx?.emp_id || "N/A"}</span>
-                                <span className="text-[9px] text-gray-500 font-mono shrink-0">|</span>
-                                <span className="text-[9px] font-bold tracking-wide font-mono text-gray-400 uppercase truncate min-w-0">{tx?.action_type || "N/A"}</span>
-                              </div>
-                              <span className="px-2 py-0.5 rounded-full text-[8px] font-mono font-bold text-white flex items-center gap-1 shadow-sm shrink-0"
-                                    style={{ background: t.red }}>
-                                CRITICAL <span className="font-black">{tx.cbsi}</span>
-                              </span>
-                            </div>
-                            <div className="flex justify-between items-center mt-2.5 pt-2 border-t" style={{ borderColor: t.border }}>
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const pdfUrl = `api/evidence/download?emp_id=${tx.emp_id}`;
-                                  forceDownloadPDF(pdfUrl, tx.emp_id);
-                                }}
-                                className="text-[9px] font-bold text-indigo-500 hover:text-indigo-600 flex items-center gap-1 transition-colors font-mono cursor-pointer bg-transparent border-none outline-none"
-                              >
-                                📥 Download
-                              </button>
-                              <span className="text-[8px] font-mono text-gray-500 uppercase font-semibold">
-                                View-Only
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      });
-                    } catch { return <div style={{ color: t.text2 }}>Alert feed error</div>; }
-                  })()}
-                </div>
-              </div>
-
-              {/* Live Transaction Stream */}
-              <div 
-                className="border transition-all duration-300 rounded-2xl p-4 lg:p-4.5 min-h-[260px] lg:h-[330px] flex flex-col hover:translate-y-[-2px]"
-                style={{
-                  background: t.card, 
-                  borderColor: t.border,
-                  boxShadow: theme === "dark" 
-                    ? "0 10px 25px -5px rgba(0, 0, 0, 0.3), inset 0 1px 0 0 rgba(255, 255, 255, 0.03)" 
-                    : "0 4px 20px -2px rgba(0, 0, 0, 0.05)"
-                }}
-              >
-                <div className="flex justify-between items-center mb-2 flex-shrink-0">
-                  <div className="text-[11px] font-bold tracking-wider uppercase font-mono" style={{ color: t.text }}>
-                    Live Transaction Stream
-                  </div>
-                  <button 
-                    onClick={() => setPage("roster")}
-                    className="text-[10px] font-bold text-indigo-500 hover:text-indigo-600 transition-colors flex items-center gap-1 cursor-pointer font-mono bg-transparent border-none outline-none"
-                  >
-                    View All →
-                  </button>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto pr-1 space-y-2 mt-2">
-                  {isLoadingInitial ? (
-                    <LoadingShimmer t={t} />
-                  ) : (() => {
-                    try {
-                      const safeBuffer = Array.isArray(scoredTxns) ? scoredTxns : [];
-                      if (!safeBuffer.length) {
-                        return <div className="text-xs" style={{ color: t.text2 }}>Loading stream...</div>;
-                      }
-                      const recent = safeBuffer.slice(-4).reverse();
-                      if (!recent.length) return <div className="text-xs" style={{ color: t.text2 }}>No transactions.</div>;
-                      return recent.map((tx) => {
-                        const isCritical = tx.cbsi >= 70;
-                        const isWatch = tx.cbsi >= 30 && tx.cbsi < 70;
-                        
-                        let dotColor = t.green;
-                        let scoreColor = t.green;
-                        if (isCritical) {
-                          dotColor = t.red;
-                          scoreColor = t.red;
-                        } else if (isWatch) {
-                          dotColor = t.amber;
-                          scoreColor = t.amber;
-                        }
-
-                        const amountColor = isCritical ? t.red : t.text;
-
-                        return (
-                          <div 
-                            key={tx.transaction_id}
-                            className="p-3 rounded-xl flex items-center justify-between gap-2 cursor-pointer hover:bg-opacity-80 transition-all duration-200 border"
-                            style={{ 
-                              background: t.cardAlt,
-                              borderColor: t.border
-                            }}
-                            onClick={() => { setProfileSearch(tx.emp_id); setPage("profile"); }}
-                          >
-                            <div className="flex items-center gap-2 min-w-0 flex-1">
-                              <span className="w-1.5 h-1.5 rounded-full animate-pulse shrink-0" style={{ background: dotColor }} />
-                              <span className="font-bold font-mono text-[10px] shrink-0" style={{ color: t.text }}>
-                                {tx?.emp_id || "N/A"}
-                              </span>
-                              <span className="text-[9px] text-gray-500 font-semibold font-mono uppercase truncate min-w-0">
-                                {tx?.action_type || "N/A"}
-                              </span>
-                            </div>
-                            
-                            <div className="flex items-center gap-2.5 shrink-0">
-                              <span className="text-[10px] font-bold font-mono shrink-0" style={{ color: amountColor }}>
-                                ₹{(tx?.amount || 0).toLocaleString()}
-                              </span>
-                              <span className="text-[9px] font-bold font-mono shrink-0" style={{ color: scoreColor }}>
-                                {tx.cbsi}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      });
-                    } catch { return <div style={{ color: t.text2 }}>Stream error</div>; }
-                  })()}
-                </div>
-              </div>
-            </div>
-
-            {/* Row 3: Charts */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
-              {/* CBSI Trend chart */}
-              <div className="md:col-span-2">
-                <div className="text-[11px] font-bold tracking-wider uppercase font-mono mb-3" style={{ color: t.text }}>
-                  CBSI Trend Over Time
-                </div>
-                <Card t={t}>
-                  {isLoadingInitial ? (
-                    <GraphSkeleton t={t} height={240} />
-                  ) : (() => {
-                    try {
-                      return (
-                        <ResponsiveContainer width="100%" height={240}>
-                          <AreaChart data={cbsiTrendData} margin={{ left: -20, right: 10, top: 10, bottom: 0 }}>
-                            <defs>
-                              <linearGradient id="cbsiFill" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#6366f1" stopOpacity={0.35} />
-                                <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
-                              </linearGradient>
-                            </defs>
-                            <CartesianGrid 
-                              strokeDasharray="3 6" 
-                              vertical={false} 
-                              stroke={theme === 'dark' ? '#1d2130' : '#e2e8f0'}
-                              opacity={0.5}
-                            />
-                            <XAxis 
-                              dataKey="t" 
-                              tick={{ fill: t.text2, fontSize: 9, fontFamily: 'monospace' }} 
-                              axisLine={false}
-                              tickLine={false}
-                            />
-                            <YAxis 
-                              domain={[0, 100]} 
-                              tick={{ fill: t.text2, fontSize: 9, fontFamily: 'monospace' }}
-                              axisLine={false}
-                              tickLine={false}
-                            />
-                            <Tooltip 
-                              content={({ active, payload, label }) => {
-                                if (active && payload && payload.length) {
-                                  const score = payload[0].value;
-                                  return (
-                                    <div className="bg-[#0b0c10] border border-[#1d2130] px-3 py-2 rounded-lg shadow-2xl font-mono text-[10px]">
-                                      <div className="text-[#7e859b] mb-0.5">{label}</div>
-                                      <div className="text-white font-bold">
-                                        CBSI Score: <span className="text-[#6366f1]">{score}</span>
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                                  return null;
-                              }}
-                              cursor={{ stroke: theme === 'dark' ? '#222638' : '#e2e8f0', strokeWidth: 1, strokeDasharray: '4 4' }}
-                            />
-                            <Area 
-                              type="monotone" 
-                              dataKey="score" 
-                              stroke="#6366f1" 
-                              fill="url(#cbsiFill)" 
-                              strokeWidth={2}
-                              dot={{ r: 3, fill: '#6366f1', strokeWidth: 0 }}
-                              activeDot={{ r: 5, fill: '#6366f1', stroke: '#ffffff', strokeWidth: 1.5 }}
-                            />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      );
-                    } catch { return <div style={{ color: t.text2 }}>Chart error</div>; }
-                  })()}
-                </Card>
-              </div>
-
-              {/* Risk Distribution donut chart */}
-              <div>
-                <div className="text-[11px] font-bold tracking-wider uppercase font-mono mb-3" style={{ color: t.text }}>
-                  Risk Distribution
-                </div>
-                <Card t={t} className="relative overflow-hidden p-4">
-                  {isLoadingInitial ? (
-                    <GraphSkeleton t={t} height={240} />
-                  ) : (() => {
-                    try {
-                      const totalTx = scoredTxns.length || 1;
-                      const criticalPct = Math.round((scoredTxns.filter(x => (x.cbsi || 0) >= 70).length / totalTx) * 100);
-                      const highPct = Math.round((scoredTxns.filter(x => (x.cbsi || 0) >= 50 && (x.cbsi || 0) < 70).length / totalTx) * 100);
-                      const watchPct = Math.round((scoredTxns.filter(x => (x.cbsi || 0) >= 30 && (x.cbsi || 0) < 50).length / totalTx) * 100);
-                      const normalPct = 100 - (criticalPct + highPct + watchPct);
-                      const pieData = [
-                        { name: 'Critical', value: criticalPct, fill: t.red },
-                        { name: 'High', value: highPct, fill: t.amber },
-                        { name: 'Normal', value: normalPct, fill: t.green },
-                        { name: 'Watch', value: watchPct, fill: t.cyan },
-                      ];
-                      return (
-                        <div className="flex flex-col xl:flex-row items-center justify-between gap-4 min-h-[220px]">
-                          {/* Chart Container */}
-                          <div className="relative w-full xl:w-1/2 h-44 flex items-center justify-center">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <PieChart>
-                                <Pie 
-                                  data={pieData} 
-                                  cx="50%" 
-                                  cy="50%" 
-                                  innerRadius={55} 
-                                  outerRadius={78} 
-                                  dataKey="value" 
-                                  label={false}
-                                >
-                                  {pieData.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                                  ))}
-                                </Pie>
-                              </PieChart>
-                            </ResponsiveContainer>
-                            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                              <div className="text-base font-bold font-mono" style={{ color: t.green }}>{normalPct}%</div>
-                              <div className="text-[8px] uppercase tracking-widest text-[#7e859b] font-bold">Normal</div>
-                            </div>
-                          </div>
-
-                          {/* Custom Responsive Legend */}
-                          <div className="w-full xl:w-1/2 flex flex-col gap-2.5 text-xs">
-                            {pieData.map((d) => (
-                              <div key={d.name} className="flex items-center justify-between w-full">
-                                <div className="flex items-center gap-2">
-                                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: d.fill }}></span>
-                                  <span className="font-medium" style={{ color: t.text2 }}>{d.name}</span>
-                                </div>
-                                <span className="font-bold font-mono" style={{ color: t.text }}>{d.value}%</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    } catch { return <div style={{ color: t.text2 }}>Pie chart error</div>; }
-                  })()}
-                </Card>
-              </div>
-
-              {/* Alerts by Type concentric ring chart */}
-              <div>
-                <div className="text-[11px] font-bold tracking-wider uppercase font-mono mb-3" style={{ color: t.text }}>
-                  Alerts By Type
-                </div>
-                <Card t={t} className="relative overflow-hidden p-4">
-                  {isLoadingInitial ? (
-                    <GraphSkeleton t={t} height={250} />
-                  ) : (() => {
-                    try {
-                      const criticalTxns = scoredTxns.filter(x => (x.cbsi || 0) >= 70);
-                      const overrideCount = criticalTxns.filter(x => (x.action_type || '').toUpperCase() === 'OVERRIDE').length;
-                      const systemCount = criticalTxns.filter(x => (x.action_type || '').toUpperCase() === 'SYSTEM' || (x.transfer_channel || '').toUpperCase() === 'SYSTEM').length;
-                      const rtgsCount = criticalTxns.filter(x => (x.transfer_channel || '').toUpperCase() === 'RTGS').length;
-                      const neftCount = criticalTxns.filter(x => (x.transfer_channel || '').toUpperCase() === 'NEFT').length;
-                      const totalAlerts = overrideCount + systemCount + rtgsCount + neftCount;
-
-                      const radialData = [
-                        { name: 'NEFT', value: neftCount, fill: t.cyan },
-                        { name: 'RTGS', value: rtgsCount, fill: t.accent },
-                        { name: 'System', value: systemCount, fill: t.amber },
-                        { name: 'Override', value: overrideCount, fill: t.red },
-                      ];
-                      return (
-                        <div className="flex flex-col xl:flex-row items-center justify-between gap-4 min-h-[220px]">
-                          {/* Chart Container */}
-                          <div className="relative w-full xl:w-1/2 h-44 flex items-center justify-center">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <RadialBarChart 
-                                cx="50%" 
-                                cy="50%" 
-                                innerRadius="30%" 
-                                outerRadius="90%" 
-                                barSize={7} 
-                                data={radialData}
-                              >
-                                <RadialBar
-                                  minAngle={15}
-                                  background={{ fill: theme === 'dark' ? '#1c1e2d' : '#f1f5f9' }}
-                                  clockWise
-                                  dataKey="value"
-                                  cornerRadius={4}
-                                />
-                              </RadialBarChart>
-                            </ResponsiveContainer>
-                            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                              <div className="text-lg font-bold font-mono" style={{ color: t.text }}>{totalAlerts}</div>
-                              <div className="text-[8px] uppercase tracking-widest text-[#7e859b] font-bold">Total</div>
-                            </div>
-                          </div>
-
-                          {/* Custom Responsive Legend */}
-                          <div className="w-full xl:w-1/2 flex flex-col gap-2.5 text-xs">
-                            {radialData.slice().reverse().map((d) => (
-                              <div key={d.name} className="flex items-center justify-between w-full">
-                                <div className="flex items-center gap-2">
-                                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: d.fill }}></span>
-                                  <span className="font-medium" style={{ color: t.text2 }}>{d.name}</span>
-                                </div>
-                                <span className="font-bold font-mono" style={{ color: t.text }}>{d.value}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    } catch { return <div style={{ color: t.text2 }}>Radial chart error</div>; }
-                  })()}
-                </Card>
-              </div>
-            </div>
-          </div>
+          <DashboardView
+            t={t}
+            theme={theme}
+            stats={stats}
+            trends={trends}
+            sparklines={sparklines}
+            isLoadingInitial={isLoadingInitial}
+            scoredTxns={scoredTxns}
+            confirmedIncidents={confirmedIncidents}
+            falseAlarms={falseAlarms}
+            setProfileSearch={setProfileSearch}
+            setPage={setPage}
+            cbsiTrendData={cbsiTrendData}
+          />
         )}
 
         {page === "roster" && (
-          <div className="space-y-6">
-            <h1 className="text-2xl font-bold font-mono tracking-tight" style={{ color: t.text }}>Employee Roster</h1>
-
-            {(() => {
-              try {
-                let filtered = [...empScores];
-                if (rosterRole !== "ALL") filtered = filtered.filter((e) => e.emp_class === rosterRole);
-                if (rosterTier !== "ALL") filtered = filtered.filter((e) => e.status === rosterTier);
-                if (rosterSearch.trim()) filtered = filtered.filter((e) => e.emp_id.toLowerCase().includes(rosterSearch.toLowerCase()));
-                const totalPages = Math.max(1, Math.ceil(filtered.length / ROWS_PER_PAGE));
-                const cp = Math.min(rosterPage, totalPages);
-                const slice = filtered.slice((cp - 1) * ROWS_PER_PAGE, cp * ROWS_PER_PAGE);
-
-                return (
-                  <>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:gap-6">
-                      <select value={rosterRole} onChange={(e) => { setRosterRole(e.target.value); setRosterPage(1); }}
-                        className="rounded-xl border px-4 py-3 text-xs font-bold transition-all duration-200 cursor-pointer outline-none focus:border-indigo-500" style={{ background: t.card, borderColor: t.border, color: t.text }}>
-                        <option value="ALL">All Roles</option>
-                        <option value="CLERK">CLERK</option>
-                        <option value="MANAGER">MANAGER</option>
-                        <option value="IT_ADMIN">IT_ADMIN</option>
-                      </select>
-                      <select value={rosterTier} onChange={(e) => { setRosterTier(e.target.value); setRosterPage(1); }}
-                        className="rounded-xl border px-4 py-3 text-xs font-bold transition-all duration-200 cursor-pointer outline-none focus:border-indigo-500" style={{ background: t.card, borderColor: t.border, color: t.text }}>
-                        <option value="ALL">All Statuses</option>
-                        <option value="CRITICAL">CRITICAL</option>
-                        <option value="HIGH">HIGH</option>
-                        <option value="WATCH">WATCH</option>
-                        <option value="NORMAL">NORMAL</option>
-                      </select>
-                      <div className="relative">
-                        <Search size={14} className="absolute left-4 top-3.5" style={{ color: t.text2 }} />
-                        <input value={rosterSearch} onChange={(e) => { setRosterSearch(e.target.value); setRosterPage(1); }}
-                          placeholder="Search EMP_ID..." className="w-full rounded-xl border pl-11 pr-4 py-2.5 text-xs font-bold outline-none focus:border-indigo-500"
-                          style={{ background: t.card, borderColor: t.border, color: t.text }} />
-                      </div>
-                    </div>
-
-                    <div className="text-xs font-mono font-semibold" style={{ color: t.text2 }}>
-                      Showing {(cp - 1) * ROWS_PER_PAGE + 1}-{Math.min(cp * ROWS_PER_PAGE, filtered.length)} of {filtered.length} | Page {cp}/{totalPages}
-                    </div>
-
-                    <Card t={t} className="!p-0 overflow-hidden border overflow-x-auto">
-                      <table className="w-full text-sm border-collapse min-w-[640px]">
-                        <thead>
-                          <tr style={{ background: t.cardAlt, borderBottom: `1px solid ${t.border}` }}>
-                            {["Employee ID", "Role", "Branch", "Peak CBSI", "Avg CBSI", "Transactions", "Status"].map((h) => (
-                              <th key={h} className="px-6 py-4.5 text-left text-[10px] uppercase tracking-wider font-bold font-mono" style={{ color: t.text2 }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {slice.map((e) => {
-                            const colors = TIER_COLORS(t);
-                            const statusColor = colors[e.status] || t.text;
-                            return (
-                              <tr key={e.emp_id} className="cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-all duration-150"
-                                style={{ borderBottom: `1px solid ${t.border}` }}
-                                onClick={() => { setProfileSearch(e.emp_id); setPage("profile"); }}>
-                                <td className="px-6 py-4.5 font-mono font-bold flex items-center gap-2">
-                                  <div className="w-7 h-7 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-500">
-                                    <User size={13} />
-                                  </div>
-                                  <span style={{ color: statusColor }}>{e.emp_id}</span>
-                                </td>
-                                <td className="px-6 py-4.5 font-semibold text-xs" style={{ color: t.text }}>{e.emp_class}</td>
-                                <td className="px-6 py-4.5 font-medium text-xs" style={{ color: t.text2 }}>
-                                  <div className="flex items-center gap-1.5">
-                                    <GitBranch size={13} className="text-slate-400" />
-                                    <span>{e.branch_id}</span>
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4.5 font-mono font-black text-sm" style={{ color: statusColor }}>{e.peak}</td>
-                                <td className="px-6 py-4.5 font-mono text-xs" style={{ color: t.text2 }}>{e.avg}</td>
-                                <td className="px-6 py-4.5 font-mono text-xs" style={{ color: t.text2 }}>{e.txnCount}</td>
-                                <td className="px-6 py-4.5"><Badge tier={e.status} t={t} /></td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </Card>
-
-                    <div className="flex justify-center items-center gap-4">
-                      <button onClick={() => setRosterPage(Math.max(1, cp - 1))} disabled={cp <= 1}
-                        className="p-2.5 rounded-xl border cursor-pointer disabled:opacity-30 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-95 flex items-center justify-center" style={{ borderColor: t.border, color: t.text2, background: t.cardAlt }}>
-                        <ChevronLeft size={16} />
-                      </button>
-                      <span className="text-xs font-mono font-bold" style={{ color: t.text2 }}>Page {cp} / {totalPages}</span>
-                      <button onClick={() => setRosterPage(Math.min(totalPages, cp + 1))} disabled={cp >= totalPages}
-                        className="p-2.5 rounded-xl border cursor-pointer disabled:opacity-30 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-95 flex items-center justify-center" style={{ borderColor: t.border, color: t.text2, background: t.cardAlt }}>
-                        <ChevronRight size={16} />
-                      </button>
-                    </div>
-                  </>
-                );
-              } catch (e) { return <div style={{ color: t.red }}>Roster error: {String(e)}</div>; }
-            })()}
-          </div>
+          <RosterView
+            t={t}
+            empScores={empScores}
+            rosterRole={rosterRole}
+            setRosterRole={setRosterRole}
+            rosterTier={rosterTier}
+            setRosterTier={setRosterTier}
+            rosterSearch={rosterSearch}
+            setRosterSearch={setRosterSearch}
+            rosterPage={rosterPage}
+            setRosterPage={setRosterPage}
+            setProfileSearch={setProfileSearch}
+            setPage={setPage}
+            ROWS_PER_PAGE={ROWS_PER_PAGE}
+            TIER_COLORS={TIER_COLORS}
+          />
         )}
 
         {page === "profile" && (
-          <div className="space-y-4">
-            <div className="flex flex-col gap-1">
-              <h1 className="text-xl lg:text-2xl font-bold font-mono tracking-tight" style={{ color: t.text }}>Employee Profile Search</h1>
-              <p className="text-xs" style={{ color: t.text2 }}>Enter a verified Employee ID to access their full forensic history, CBSI timeline, and AI-generated risk analysis.</p>
-            </div>
-            <div className="relative w-full">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: t.text2 }} />
-              <input
-                value={profileSearch}
-                onChange={(e) => setProfileSearch(e.target.value)}
-                placeholder="e.g. EMP_1001, EMP_1416, EMP_9999"
-                className="w-full rounded-xl border pl-12 pr-6 py-3.5 text-sm font-mono font-semibold outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all"
-                style={{ background: t.card, borderColor: t.border, color: t.text }}
-              />
-            </div>
-
-            {(() => {
-              try {
-                const eid = profileSearch.trim().toUpperCase();
-                if (!eid) return (
-                  <Card t={t} className="text-center !py-16">
-                    <div className="text-base" style={{ color: t.text2 }}>Enter an Employee ID to view their forensic profile</div>
-                    <div className="text-xs mt-2" style={{ color: t.text2 }}>Example: EMP_1001, EMP_1416, EMP_1200</div>
-                  </Card>
-                );
-
-                const emp = scoredTxns.find((tx) => tx?.emp_id === eid);
-                const txns = scoredTxns.filter((tx) => tx?.emp_id === eid);
-                const latestTxn = txns[txns.length - 1];
-                if (!emp && !txns.length) return <div className="text-sm" style={{ color: t.amber }}>No data found for {eid}.</div>;
-
-                const peak = txns.length ? Math.max(...txns.map((x) => x.cbsi)) : 0;
-                const tier = riskTier(peak);
-                const c = tc[tier];
-                const isConfirmed = confirmedIncidents.some((inc) => inc.emp_id === eid);
-                const displayRole = emp?.emp_class || "Unknown";
-                const isDanger = peak >= 75;
-
-                const dailyMap = {};
-                txns.forEach((tx) => {
-                  const d = tx?.timestamp?.slice(0, 10);
-                  if (!d) return;
-                  if (!dailyMap[d]) dailyMap[d] = { sum: 0, count: 0 };
-                  dailyMap[d].sum += tx.cbsi;
-                  dailyMap[d].count++;
-                });
-                let trendData = Object.entries(dailyMap)
-                  .map(([d, v]) => ({ date: d, cbsi: Math.round((v.sum / v.count) * 10) / 10 }))
-                  .sort((a, b) => a.date.localeCompare(b.date));
-
-                if (trendData.length < 2) {
-                  const formatDate = (d) => d.toISOString().slice(0, 10);
-                  const latestRaw = txns[txns.length - 1]?.timestamp;
-                  let baseDate = latestRaw ? new Date(latestRaw) : new Date();
-                  if (Number.isNaN(baseDate.getTime())) {
-                    baseDate = new Date();
-                  }
-                  const baseScore = peak || (txns[txns.length - 1]?.cbsi ?? 15);
-                  trendData = Array.from({ length: 7 }, (_, idx) => {
-                    const d = new Date(baseDate);
-                    d.setDate(d.getDate() - (6 - idx));
-                    const jitter = (idx % 3 - 1) * 2;
-                    const score = Math.max(5, Math.min(100, Math.round(baseScore + jitter)));
-                    return { date: formatDate(d), cbsi: score };
-                  });
-                }
-
-                const flaggedTxns = txns.filter((x) => x.cbsi >= 40).sort((a, b) => b.cbsi - a.cbsi).slice(0, 20);
-                const nlpTxns = txns.filter((tx) => tx?.raw_complaint_text?.trim());
-                const isFalseAlarm = falseAlarms.includes(eid);
-
-                // Real shared-IP peer detection (no fabricated peers) — used by BlastRadius
-                const targetIps = new Set(txns.map((tx) => tx?.ip_address).filter(Boolean));
-                let sharedIpPeer = null;
-                if (targetIps.size) {
-                  const peerTxn = scoredTxns.find(
-                    (tx) => tx?.emp_id && tx.emp_id !== eid && tx.ip_address && targetIps.has(tx.ip_address)
-                  );
-                  if (peerTxn) sharedIpPeer = { peerId: peerTxn.emp_id, sharedIp: peerTxn.ip_address };
-                }
-
-                return (
-                  <>
-                    <Card t={t} style={{ borderLeft: `4px solid ${c}` }}>
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <div className="text-xl font-bold">{eid}</div>
-                          <div className="text-sm" style={{ color: t.text2 }}>{displayRole} | {emp?.branch_id || "Unknown"}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-4xl font-bold font-mono" style={{ color: c }}>{peak}</div>
-                          <Badge tier={tier} t={t} />
-                        </div>
-                      </div>
-
-                      {/* Employee Detailed Profile Info */}
-                      <div className="mt-4 pt-4 border-t grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono" style={{ borderColor: t.border }}>
-                        <div>
-                          <div className="text-[9px] uppercase tracking-wider text-indigo-400 mb-1.5 font-bold">Contact Details</div>
-                          <div className="flex flex-col gap-1.5" style={{ color: t.text }}>
-                            <div>
-                              <span className="font-semibold" style={{ color: t.text2 }}>Email:</span> {eid.toLowerCase()}@vaultmind.ubi.com
-                            </div>
-                            <div>
-                              <span className="font-semibold" style={{ color: t.text2 }}>Phone:</span> +91 {9800000000 + Math.abs(eid.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0) * 12345) % 100000000}
-                            </div>
-                            <div>
-                              <span className="font-semibold" style={{ color: t.text2 }}>Address:</span> {
-                                (() => {
-                                  const branch = emp?.branch_id || latestTxn?.branch_id || "BR_01";
-                                  const addrMap = {
-                                    BR_01: "Flat 402, Sea Breeze Apartments, Colaba, Mumbai, Maharashtra - 400005",
-                                    BR_02: "House No. 12, Block C, Connaught Place, New Delhi - 110001",
-                                    BR_03: "23/A, Salt Lake Sector V, Kolkata, West Bengal - 700091",
-                                    BR_04: "15, Khader Nawaz Khan Road, Nungambakkam, Chennai, Tamil Nadu - 600006",
-                                    BR_05: "88, 100 Feet Road, Indiranagar, Bengaluru, Karnataka - 560038",
-                                    BR_06: "Plot 40, Gachibowli, Hyderabad, Telangana - 500032",
-                                    BR_07: "12, Senapati Bapat Road, Shivajinagar, Pune, Maharashtra - 411016",
-                                    BR_08: "45, Ashram Road, Ahmedabad, Gujarat - 380009",
-                                    BR_09: "6, MI Road, Jaipur, Rajasthan - 302001",
-                                    BR_10: "14, Hazratganj, Lucknow, Uttar Pradesh - 226001",
-                                    BR_11: "2B, Fraser Road, Patna, Bihar - 800001",
-                                    BR_12: "7, Arera Colony, Bhopal, Madhya Pradesh - 462016",
-                                    BR_13: "18, G.S. Road, Guwahati, Assam - 781005",
-                                    BR_14: "5, Residency Road, Srinagar, Jammu & Kashmir - 190001",
-                                    BR_15: "22, MG Road, Ernakulam, Kochi, Kerala - 682016",
-                                    BR_16: "9, Beach Road, Visakhapatnam, Andhra Pradesh - 530003",
-                                    BR_17: "Sector 17-C, Chandigarh - 160017",
-                                    BR_18: "32, Palasia, Indore, Madhya Pradesh - 452001",
-                                    BR_19: "11, Civil Lines, Nagpur, Maharashtra - 440001",
-                                    BR_20: "5, Janpath, Bhubaneswar, Odisha - 751001"
-                                  };
-                                  return addrMap[branch] || "Union Bank of India, Mumbai Branch, Maharashtra - 400001";
-                                })()
-                              }
-                            </div>
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="text-[9px] uppercase tracking-wider text-indigo-400 mb-1.5 font-bold">Operational Info</div>
-                          <div className="flex flex-col gap-1.5" style={{ color: t.text }}>
-                            <div>
-                              <span className="font-semibold" style={{ color: t.text2 }}>Work Shift:</span> {
-                                (() => {
-                                  const meta = employeeMetadata[eid];
-                                  if (meta && meta.work_start_hr !== undefined && meta.work_end_hr !== undefined) {
-                                    return `${String(meta.work_start_hr).padStart(2, '0')}:00 - ${String(meta.work_end_hr).padStart(2, '0')}:00`;
-                                  }
-                                  return "09:00 - 18:00";
-                                })()
-                              }
-                            </div>
-                            <div>
-                              <span className="font-semibold" style={{ color: t.text2 }}>Peer Cluster:</span> {
-                                (() => {
-                                  const meta = employeeMetadata[eid];
-                                  return meta?.peer_cluster !== undefined ? `Group ${meta.peer_cluster} (${displayRole} Operations)` : "Group 4 (Retail Operations)";
-                                })()
-                              }
-                            </div>
-                            <div>
-                              <span className="font-semibold" style={{ color: t.text2 }}>Assigned Assets:</span> Terminal-{100 + Math.abs(eid.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0)) % 900} (Branch VPN)
-                            </div>
-                            <div>
-                              <span className="font-semibold" style={{ color: t.text2 }}>Access Level:</span> L2 Operations (CB CBS Write Access)
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {userRole !== 'analyst' ? (
-                        <div className="mt-4 flex items-center gap-3 flex-wrap">
-                          <button
-                            onClick={() => handleConfirmIncident(eid)}
-                            disabled={isConfirmed || isFalseAlarm}
-                            className="px-3 py-1.5 text-[10px] font-mono font-bold border border-[#E50914] text-[#E50914] hover:bg-[#E50914] hover:text-white transition-colors uppercase rounded-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            [ CONFIRM INCIDENT ]
-                          </button>
-                          <button
-                            onClick={() => handleFalseAlarm(eid)}
-                            disabled={isFalseAlarm || isConfirmed}
-                            className="px-3 py-1.5 text-[10px] font-mono font-bold border border-[#FFB300] text-[#FFB300] hover:bg-[#FFB300] hover:text-black transition-colors uppercase rounded-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {isFalseAlarm ? "[ RETRAINING AI... ]" : "[ FALSE ALARM / RETRAIN ]"}
-                          </button>
-                          <button
-                            onClick={() => {
-                              const pdfUrl = `api/evidence/download?emp_id=${eid}`;
-                              forceDownloadPDF(pdfUrl, eid);
-                            }}
-                            className="px-3 py-1.5 text-[10px] font-mono font-bold border border-blue-500 text-blue-500 hover:bg-blue-900/40 transition-colors uppercase rounded-sm cursor-pointer"
-                          >
-                            [ 📥 DOWNLOAD DOSSIER ]
-                          </button>
-                          {isConfirmed && (
-                            <span className="text-[10px] font-mono font-bold text-[#00E676] uppercase tracking-widest">
-                              INCIDENT CONFIRMED
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="mt-4 flex items-center gap-3 flex-wrap">
-                          <span className="text-[10px] font-mono font-bold text-gray-500 tracking-widest">[ ANALYST: VIEW-ONLY MODE ]</span>
-                          <button
-                            onClick={() => {
-                              const pdfUrl = `api/evidence/download?emp_id=${eid}`;
-                              forceDownloadPDF(pdfUrl, eid);
-                            }}
-                            className="px-3 py-1.5 text-[10px] font-mono font-bold border border-blue-500 text-blue-500 hover:bg-blue-900/40 transition-colors uppercase rounded-sm cursor-pointer"
-                          >
-                            [ 📥 DOWNLOAD DOSSIER ]
-                          </button>
-                        </div>
-                      )}
-                    </Card>
-
-                    <GNNThreatNode isCritical={peak >= 85} t={t} theme={theme} />
-                    <HistoricalContext emp_id={eid} t={t} theme={theme} />
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 my-4">
-                      <ShapSimulator initialScore={peak} isCritical={peak > 75} t={t} theme={theme} />
-                      <GlassBoxEngine score={peak} emp_id={eid} context={latestTxn} t={t} theme={theme} />
-                    </div>
-
-                    {(tier === "CRITICAL" || tier === "HIGH") && (
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 my-4">
-                        <BlastRadius targetId={eid} peerId={sharedIpPeer?.peerId} sharedIp={sharedIpPeer?.sharedIp} t={t} theme={theme} />
-                        <ForensicTimeline events={(() => {
-                          // Use all flagged transactions first (sorted by time, most recent last)
-                          const sorted = [...flaggedTxns].sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
-                          // If fewer than 3 flagged, backfill with recent employee txns
-                          let pool = sorted;
-                          if (sorted.length < 3) {
-                            const recentTxns = [...txns]
-                              .sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
-                              .filter(tx => !sorted.some(s => s.transaction_id === tx.transaction_id));
-                            pool = [...recentTxns.slice(-10), ...sorted];
-                          }
-                          return pool.slice(-15).map(tx => ({
-                            time: tx.timestamp ? tx.timestamp.slice(11, 19) : 'N/A',
-                            text: `${tx.action_type} - Rs.${(tx.amount || 0).toLocaleString()}`,
-                            tier: riskTier(tx.cbsi)
-                          }));
-                        })()} t={t} theme={theme} />
-                      </div>
-                    )}
-
-                    <ProfileTabs t={t} tc={tc} trendData={trendData} txns={txns} flaggedTxns={flaggedTxns} nlpTxns={nlpTxns} eid={eid} isCritical={peak > 75} isCalm={peak < 30} />
-                  </>
-                );
-              } catch (e) { return <div style={{ color: t.red }}>Profile error: {String(e)}</div>; }
-            })()}
-          </div>
+          <ProfileView
+            t={t}
+            tc={tc}
+            theme={theme}
+            profileSearch={profileSearch}
+            setProfileSearch={setProfileSearch}
+            scoredTxns={scoredTxns}
+            confirmedIncidents={confirmedIncidents}
+            falseAlarms={falseAlarms}
+            employeeMetadata={employeeMetadata}
+            userRole={userRole}
+            handleConfirmIncident={handleConfirmIncident}
+            handleFalseAlarm={handleFalseAlarm}
+          />
         )}
 
-        {page === "evidence" && (() => {
-          const filteredEvidence = vaultEvidence.filter(evd => 
-            (evd.emp_id || "").toLowerCase().includes(evidenceSearch.toLowerCase())
-          );
-          const totalPages = Math.max(1, Math.ceil(filteredEvidence.length / EVIDENCE_PER_PAGE));
-          const evPage = Math.min(evidencePage, totalPages);
-          const evSlice = filteredEvidence.slice((evPage - 1) * EVIDENCE_PER_PAGE, evPage * EVIDENCE_PER_PAGE);
-          return (
-            <div className="space-y-4">
-              <h1 className="text-2xl font-bold">Evidence Vault</h1>
-
-              <div className="relative">
-                <Search size={14} className="absolute left-3 top-3" style={{ color: t.text2 }} />
-                <input 
-                  value={evidenceSearch} 
-                  onChange={(e) => { setEvidenceSearch(e.target.value); setEvidencePage(1); }}
-                  placeholder="🔍 Search by EMP_ID..." 
-                  className="w-full rounded-lg border pl-9 pr-3 py-2 text-sm"
-                  style={{ background: t.card, borderColor: t.border, color: t.text }} 
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <KpiCard title="PDF Evidence Packages" value={String(filteredEvidence.length)} color={t.teal} t={t} />
-                <KpiCard title="STR JSON Filings" value={String(filteredEvidence.length)} color={t.cyan} t={t} />
-              </div>
-
-              <Section title="Verified STR Evidence Packages (Agent 7)" t={t} />
-              <Card t={t} className="!p-0 overflow-hidden mb-2 overflow-x-auto">
-                <table className="w-full text-left text-sm font-mono min-w-[640px]">
-                  <thead>
-                    <tr style={{ background: t.cardAlt, borderBottom: `1px solid ${t.border}` }}>
-                      <th className="p-4 text-[10px] uppercase font-bold" style={{ color: t.text2 }}>Filename</th>
-                      <th className="p-4 text-[10px] uppercase font-bold" style={{ color: t.text2 }}>SHA-256 Hash</th>
-                      <th className="p-4 text-[10px] uppercase font-bold" style={{ color: t.text2 }}>Block ID</th>
-                      <th className="p-4 text-[10px] uppercase font-bold" style={{ color: t.text2 }}>Timestamp</th>
-                      <th className="p-4 text-[10px] uppercase font-bold" style={{ color: t.text2 }}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y" style={{ borderColor: t.border }}>
-                    {evSlice.map((evd) => (
-                      <tr
-                        key={evd.id}
-                        className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                        style={{
-                          borderColor: t.border,
-                          background: newEvidenceIds.has(evd.id) ? "rgba(0,230,118,0.08)" : "transparent"
-                        }}
-                      >
-                        <td className="p-4 text-[#00D4AA] font-bold">
-                          <div className="flex items-center gap-2">
-                            {evd.status === "Generated" && <FileText size={14} className="text-[#00D4AA]" />}
-                            {newEvidenceIds.has(evd.id) && <span className="text-[9px] font-mono text-green-400 animate-pulse">NEW</span>}
-                            <span className={evd.status === "Generated" ? "" : "text-gray-500"}>{evd.filename}</span>
-                          </div>
-                        </td>
-                        <td className="p-4 text-xs" style={{ color: t.text2 }}>{evd.hash}</td>
-                        <td className="p-4 text-xs" style={{ color: t.text2 }}>{evd.blockId}</td>
-                        <td className="p-4 text-[10px]" style={{ color: t.text2 }}>{evd.timestamp}</td>
-                        <td className="p-4">
-                          {evd.status === "Pending Dossier" ? (
-                            <span className="text-xs text-[#FFB300] font-bold animate-pulse">PENDING DOSSIER</span>
-                          ) : (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const cleanFilename = evd.filename.split('\\').pop().split('/').pop();
-                                const pdfUrl = `api/evidence/download?filename=${encodeURIComponent(cleanFilename)}`;
-                                forceDownloadPDF(pdfUrl, evd.emp_id);
-                              }}
-                              className="px-3 py-1.5 text-[10px] font-mono font-bold border border-blue-500 text-blue-500 hover:bg-blue-900/40 transition-colors uppercase rounded-sm cursor-pointer"
-                            >
-                              [ 📥 DOWNLOAD EVIDENCE ]
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </Card>
-
-              <div className="flex justify-between items-center text-xs" style={{ color: t.text2 }}>
-                <span>Showing {(evPage - 1) * EVIDENCE_PER_PAGE + 1}–{Math.min(evPage * EVIDENCE_PER_PAGE, filteredEvidence.length)} of {filteredEvidence.length}</span>
-                <div className="flex items-center gap-3">
-                  <button onClick={() => setEvidencePage(Math.max(1, evPage - 1))} disabled={evPage <= 1}
-                    className="p-1.5 rounded border cursor-pointer disabled:opacity-30" style={{ borderColor: t.border, color: t.text2 }}>
-                    <ChevronLeft size={14} />
-                  </button>
-                  <span className="font-mono">Page {evPage} / {totalPages}</span>
-                  <button onClick={() => setEvidencePage(Math.min(totalPages, evPage + 1))} disabled={evPage >= totalPages}
-                    className="p-1.5 rounded border cursor-pointer disabled:opacity-30" style={{ borderColor: t.border, color: t.text2 }}>
-                    <ChevronRight size={14} />
-                  </button>
-                </div>
-              </div>
-
-              <Section title="Generate New Evidence" t={t} />
-              <Card t={t} className="flex flex-wrap items-center justify-between gap-4 p-6">
-                <div className="text-sm" style={{ color: t.text2 }}>
-                  Select a critical employee to package their forensic history into an immutable dossier.
-                </div>
-                <div className="flex items-center gap-4">
-                  <select
-                    value={generateTarget}
-                    onChange={(e) => setGenerateTarget(e.target.value)}
-                    className="border px-4 py-2 rounded font-mono text-sm outline-none cursor-pointer"
-                    style={{ background: t.card, borderColor: t.border, color: t.text }}
-                  >
-                    <option value="">Select Target...</option>
-                    {dossierOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                  {isGeneratingDossier ? (
-                    <div className="px-6 py-2 flex items-center gap-2 bg-[#00D4AA] text-[#111] font-bold uppercase tracking-wider rounded">
-                      <Loader2 size={16} className="animate-spin" /> GENERATING...
-                    </div>
-                  ) : lastGenerated && lastGenerated.emp_id === generateTarget ? (
-                    <div className="px-4 py-2 flex items-center gap-2 rounded border text-xs font-mono"
-                         style={{ borderColor: t.border, background: t.cardAlt, color: t.text2 }}>
-                      <FileText size={14} className="text-[#00D4AA]" />
-                      {lastGenerated.hash}
-                    </div>
-                  ) : (
-                    <button
-                      onClick={handleGenerateDossier}
-                      disabled={!generateTarget}
-                      className="px-6 py-2 flex items-center gap-2 bg-[#00D4AA] text-[#111] font-bold uppercase tracking-wider rounded hover:bg-[#00b390] transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      [ GENERATE FIU DOSSIER ]
-                    </button>
-                  )}
-                </div>
-              </Card>
-            </div>
-          );
-        })()}
+        {page === "evidence" && (
+          <EvidenceView
+            t={t}
+            vaultEvidence={vaultEvidence}
+            evidenceSearch={evidenceSearch}
+            setEvidenceSearch={setEvidenceSearch}
+            evidencePage={evidencePage}
+            setEvidencePage={setEvidencePage}
+            newEvidenceIds={newEvidenceIds}
+            EVIDENCE_PER_PAGE={EVIDENCE_PER_PAGE}
+            generateTarget={generateTarget}
+            setGenerateTarget={setGenerateTarget}
+            isGeneratingDossier={isGeneratingDossier}
+            lastGenerated={lastGenerated}
+            dossierOptions={dossierOptions}
+            handleGenerateDossier={handleGenerateDossier}
+          />
+        )}
 
 {/* ── FUND FLOW GRAPH ─────────────────────────────── */}
         {page === "graph" && (
@@ -1961,428 +1016,53 @@ export default function App() {
         )}
 
         {/* ── DECEPTIONGUARD ─────────────────────────────────── */}
-        {page === "deception" && (() => {
-          // ERR5: Data-driven from live scoredTxns
-          const honeypotBreaches = scoredTxns.filter(tx =>
-            tx.account_touched && (tx.account_touched.includes("MIRAGE") || tx.account_touched.includes("GHOST")) ||
-            (tx.decision === "ISOLATE" && tx.dominant_agent === "DeceptionGuard")
-          );
-          const liveBreachTx = honeypotBreaches[honeypotBreaches.length - 1];
-          const staticHoneypotBreach = {
-            accountId: liveBreachTx?.account_touched || "ACC_GHOST_07",
-            attackerId: liveBreachTx?.emp_id || "EMP_1024",
-            attackerRole: liveBreachTx?.emp_class || "IT Admin",
-            threatOrigin: liveBreachTx ? `${liveBreachTx.emp_id} (${liveBreachTx.emp_class || 'Unknown'}) | Branch: ${liveBreachTx.branch_id || 'Unknown'}` : "EMP_1024 (IT Admin) | IP: 192.168.1.45 (Mumbai_BR_05)"
-          };
-          return (
-            <div className="space-y-6 pb-12">
-              <div className="flex items-center gap-4">
-                <h1 className="text-2xl font-bold font-mono tracking-[4px] uppercase" style={{ color: t.accent }}>DeceptionGuard</h1>
-                {honeypotBreaches.length > 0 && (
-                  <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-red-500/20 text-red-400 animate-pulse">
-                    {honeypotBreaches.length} LIVE BREACH{honeypotBreaches.length > 1 ? 'ES' : ''} DETECTED
-                  </span>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
-                <div>
-                  <Section title="Honeypot Node Radar" t={t} />
-                  <Card t={t} className="flex flex-col items-center justify-center !py-12 relative overflow-hidden h-[400px]">
-                    <div className="absolute inset-0 opacity-10 pointer-events-none"
-                      style={{ background: 'linear-gradient(rgba(0, 255, 0, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 255, 0, 0.1) 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
-                    <div className="relative flex items-center justify-center w-64 h-64 border rounded-full transition-colors"
-                         style={{ borderColor: t.border }}>
-                      <div className="absolute w-48 h-48 border rounded-full transition-colors" style={{ borderColor: t.border }}></div>
-                      <div className="absolute w-32 h-32 border rounded-full transition-colors" style={{ borderColor: t.border }}></div>
-                      <div className="absolute w-16 h-16 border rounded-full text-center flex items-center justify-center font-mono text-[8px] transition-colors"
-                           style={{ borderColor: t.border, color: t.text2 }}>CORE</div>
-                      <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-                        className="absolute w-full h-full rounded-full"
-                        style={{
-                          background: "conic-gradient(from 0deg, rgba(0, 230, 118, 0.05) 0deg, transparent 60deg, transparent 360deg)",
-                          borderRight: "1px solid rgba(0, 230, 118, 0.4)"
-                        }}
-                      />
-                      <motion.div animate={{ opacity: [0.1, 1, 0.1] }} transition={{ duration: 2, repeat: Infinity, delay: 0.2 }}
-                        className="absolute w-1.5 h-1.5 bg-[#00E676] rounded-full top-10 left-20 shadow-[0_0_8px_#00E676]" />
-                      <motion.div animate={{ opacity: [0.1, 1, 0.1] }} transition={{ duration: 2.5, repeat: Infinity, delay: 1 }}
-                        className="absolute w-2 h-2 bg-[#FFB300] rounded-full top-12 right-16 shadow-[0_0_10px_#FFB300]" />
-                      {honeypotBreaches.length > 0 ? (
-                        <motion.div animate={{ opacity: [0.1, 1, 0.1] }} transition={{ duration: 0.8, repeat: Infinity, delay: 0 }}
-                          className="absolute bottom-12 left-12 flex items-center gap-1.5">
-                          <div className="w-2.5 h-2.5 bg-[#E50914] rounded-full shadow-[0_0_12px_#E50914]" />
-                          <span className="text-[8px] font-mono font-bold text-[#E50914] tracking-widest whitespace-nowrap opacity-90 mix-blend-screen">[BREACH: {staticHoneypotBreach.accountId}]</span>
-                        </motion.div>
-                      ) : (
-                        <motion.div animate={{ opacity: [0.1, 1, 0.1] }} transition={{ duration: 3, repeat: Infinity, delay: 0.5 }}
-                          className="absolute bottom-12 left-12 flex items-center gap-1.5">
-                          <div className="w-2 h-2 bg-[#E50914] rounded-full shadow-[0_0_10px_#E50914]" />
-                          <span className="text-[8px] font-mono font-bold text-[#E50914] tracking-widest whitespace-nowrap opacity-80 mix-blend-screen">[TARGET PING: MUMBAI]</span>
-                        </motion.div>
-                      )}
-                      <motion.div animate={{ opacity: [0.1, 1, 0.1] }} transition={{ duration: 1.5, repeat: Infinity, delay: 2 }}
-                        className="absolute w-1.5 h-1.5 bg-[#00E676] rounded-full bottom-20 right-12 shadow-[0_0_8px_#00E676]" />
-                    </div>
-                    <div className="mt-8 text-xs font-mono text-[#00E676] animate-pulse uppercase tracking-widest flex items-center gap-2">
-                      <span className="w-2 h-2 bg-[#00E676] rounded-sm"></span>
-                      {honeypotBreaches.length > 0 ? `${honeypotBreaches.length} Breach(es) Detected` : "Scanning Subnets..."}
-                    </div>
-                  </Card>
-                </div>
-
-                <div>
-                  <Section title="Active Ghost Accounts" t={t} />
-                  <Card t={t} className="!p-0 overflow-hidden">
-                    <div className="h-[400px] flex flex-col">
-                      <table className="w-full text-left text-sm font-mono flex-shrink-0">
-                        <thead>
-                          <tr style={{ background: t.cardAlt, borderBottom: `1px solid ${t.border}` }}>
-                            <th className="p-4 text-[10px] uppercase font-bold w-1/4" style={{ color: t.text2 }}>Account ID</th>
-                            <th className="p-4 text-[10px] uppercase font-bold w-1/4" style={{ color: t.text2 }}>Risk Level</th>
-                            <th className="p-4 text-[10px] uppercase font-bold w-1/4" style={{ color: t.text2 }}>Department</th>
-                            <th className="p-4 text-[10px] uppercase font-bold w-1/4" style={{ color: t.text2 }}>Status</th>
-                          </tr>
-                        </thead>
-                      </table>
-                      <div className="overflow-y-auto flex-1">
-                        <table className="w-full text-left text-sm font-mono">
-                          <tbody>
-                            {/* Live breach rows from real data */}
-                            {honeypotBreaches.slice(-5).reverse().map((tx, i) => (
-                              <tr 
-                                key={`${tx.transaction_id || i}-${i}`} 
-                                className="hover:opacity-90 transition-all border-b" 
-                                style={{ 
-                                  borderColor: t.border, 
-                                  background: theme === 'dark' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(239, 68, 68, 0.05)',
-                                  color: t.text 
-                                }}
-                              >
-                                <td className="p-4 font-bold" style={{ color: t.red }}>{tx.account_touched}</td>
-                                <td className="p-4 font-bold" style={{ color: t.text }}>Rs.{(tx.amount || 0).toLocaleString()}</td>
-                                <td className="p-4 text-xs font-bold animate-pulse" style={{ color: t.red }}>
-                                  BREACH DETECTED
-                                  <button
-                                    onClick={() => { setProfileSearch(tx.emp_id); setPage("profile"); }}
-                                    className="ml-3 px-2 py-0.5 text-white text-[9px] uppercase tracking-wider rounded font-bold hover:opacity-90 transition cursor-pointer border-none shadow-sm"
-                                    style={{ background: t.red }}
-                                  >[ Investigate ]</button>
-                                </td>
-                                <td className="p-4 text-[11px] font-bold" style={{ color: t.amber }}>{tx.emp_id} | {tx.branch_id || "Unknown Branch"}</td>
-                              </tr>
-                            ))}
-                            {/* Real registry from DeceptionGuard (/api/deception/honeypots) */}
-                            {honeypotAccounts
-                              .filter((acc) => !honeypotBreaches.slice(-5).some((tx) => tx.account_touched === acc.mirage_id))
-                              .map((acc) => (
-                                <tr key={acc.mirage_id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors border-b" style={{ borderColor: t.border, color: t.text }}>
-                                  <td className="p-4 font-bold" style={{ color: t.accent }}>{acc.mirage_id}</td>
-                                  <td className="p-4 text-xs" style={{ color: t.text2 }}>{acc.risk_level}</td>
-                                  <td className="p-4 text-xs" style={{ color: t.text2 }}>{acc.department}</td>
-                                  <td className="p-4 text-xs font-bold" style={{ color: acc.is_breached ? t.red : t.text2 }}>{acc.status}</td>
-                                </tr>
-                              ))}
-                            {!honeypotAccounts.length && (
-                              <tr><td colSpan={4} className="p-4 text-xs text-center" style={{ color: t.text2 }}>Loading honeypot registry...</td></tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </Card>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+        {page === "deception" && (
+          <DeceptionView
+            t={t}
+            theme={theme}
+            scoredTxns={scoredTxns}
+            honeypotAccounts={honeypotAccounts}
+            setProfileSearch={setProfileSearch}
+            setPage={setPage}
+          />
+        )}
 
         {page === "reports" && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <div>
-                <h1 className="text-2xl font-bold font-mono tracking-tight" style={{ color: t.text }}>Reports & Analytics</h1>
-                <p className="text-xs mt-1" style={{ color: t.text2 }}>Generate comprehensive dossiers and run behavioral audit retrains</p>
-              </div>
-              <BarChart2 size={24} className="text-indigo-500" />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
-              {/* Forensic Compiler */}
-              <Card t={t} className="flex flex-col justify-between min-h-[300px] lg:h-[360px]">
-                <div>
-                  <div className="text-xs font-bold tracking-wider uppercase font-mono mb-3" style={{ color: t.text }}>
-                    Forensic Report Builder
-                  </div>
-                  <p className="text-xs mb-5" style={{ color: t.text2 }}>Export cryptographically signed audits of flag counts and branch CBSI scores.</p>
-                  
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color: t.text2 }}>Target Scope</label>
-                        <select 
-                          value={selectedReportScope} 
-                          onChange={(e) => setSelectedReportScope(e.target.value)}
-                          className="rounded-xl border px-3.5 py-2 text-xs font-bold outline-none cursor-pointer"
-                          style={{ background: t.cardAlt, borderColor: t.border, color: t.text }}
-                        >
-                          <option value="ALL">All Branches (Global)</option>
-                          <option value="BR_01">BR_01 (Mumbai South)</option>
-                          <option value="BR_02">BR_02 (Delhi Central)</option>
-                          <option value="BR_03">BR_03 (Kolkata East)</option>
-                          <option value="BR_04">BR_04 (Chennai South)</option>
-                        </select>
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color: t.text2 }}>Time Frame</label>
-                        <select 
-                          value={selectedReportDate} 
-                          onChange={(e) => setSelectedReportDate(e.target.value)}
-                          className="rounded-xl border px-3.5 py-2 text-xs font-bold outline-none cursor-pointer"
-                          style={{ background: t.cardAlt, borderColor: t.border, color: t.text }}
-                        >
-                          <option value="LAST_24H">Last 24 Hours</option>
-                          <option value="LAST_7D">Last 7 Days</option>
-                          <option value="LAST_30D">Last 30 Days</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color: t.text2 }}>File Format</label>
-                      <select 
-                        value={selectedReportFormat} 
-                        onChange={(e) => setSelectedReportFormat(e.target.value)}
-                        className="rounded-xl border px-3.5 py-2 text-xs font-bold outline-none cursor-pointer"
-                        style={{ background: t.cardAlt, borderColor: t.border, color: t.text }}
-                      >
-                        <option value="PDF">PDF Signed Dossier</option>
-                        <option value="CSV">CSV Aggregated Data</option>
-                        <option value="JSON">Raw JSON Log Output</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleCompileReport}
-                  disabled={isCompilingReport}
-                  className="w-full py-3 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-98 transition-all flex items-center justify-center gap-2 cursor-pointer border-none shadow-md"
-                >
-                  {isCompilingReport ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      <span>Compiling Telemetry...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download size={14} />
-                      <span>Compile & Download Report</span>
-                    </>
-                  )}
-                </button>
-              </Card>
-
-              {/* Neural Retraining */}
-              <Card t={t} className="flex flex-col justify-between min-h-[300px] lg:h-[360px]">
-                <div>
-                  <div className="text-xs font-bold tracking-wider uppercase font-mono mb-3" style={{ color: t.text }}>
-                    AI Retraining Pipeline
-                  </div>
-                  <p className="text-xs mb-5" style={{ color: t.text2 }}>Initiate behavioral weight updates based on audit flags (confirms & false alarms).</p>
-                  
-                  <div className="space-y-4 text-xs font-mono">
-                    <div className="p-3.5 rounded-xl border flex justify-between items-center" style={{ background: t.cardAlt, borderColor: t.border }}>
-                      <div>
-                        <div className="font-bold" style={{ color: t.text }}>GNN-Behavioral Model</div>
-                        <div className="text-[10px]" style={{ color: t.text2 }}>v2.4-neural-graph</div>
-                      </div>
-                      <span className="text-xs font-bold" style={{ color: t.green }}>Active</span>
-                    </div>
-
-                    <div className="p-3.5 rounded-xl border flex justify-between items-center" style={{ background: t.cardAlt, borderColor: t.border }}>
-                      <div>
-                        <div className="font-bold" style={{ color: t.text }}>Validation Accuracy</div>
-                        <div className="text-[10px]" style={{ color: t.text2 }}>Target margin: &gt;98.0%</div>
-                      </div>
-                      <span className="text-xs font-black" style={{ color: t.accent }}>98.42%</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  {isTraining && (
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between text-[10px] font-mono font-bold" style={{ color: t.text2 }}>
-                        <span>Optimizing Graph Nodes...</span>
-                        <span>{trainingProgress}%</span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: t.border }}>
-                        <div className="h-full bg-indigo-500 transition-all duration-150" style={{ width: `${trainingProgress}%` }} />
-                      </div>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleRetrainModel}
-                    disabled={isTraining}
-                    className="w-full py-3 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-98 transition-all flex items-center justify-center gap-2 cursor-pointer border-none shadow-md disabled:opacity-50"
-                  >
-                    {isTraining ? (
-                      <>
-                        <Loader2 size={14} className="animate-spin" />
-                        <span>Training GNN Epochs...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Activity size={14} />
-                        <span>Initiate Pipeline Retraining</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </Card>
-            </div>
-          </div>
+          <ReportsView
+            t={t}
+            selectedReportScope={selectedReportScope}
+            setSelectedReportScope={setSelectedReportScope}
+            selectedReportDate={selectedReportDate}
+            setSelectedReportDate={setSelectedReportDate}
+            selectedReportFormat={selectedReportFormat}
+            setSelectedReportFormat={setSelectedReportFormat}
+            isCompilingReport={isCompilingReport}
+            handleCompileReport={handleCompileReport}
+            isTraining={isTraining}
+            trainingProgress={trainingProgress}
+            handleRetrainModel={handleRetrainModel}
+          />
         )}
 
         {page === "settings" && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <div>
-                <h1 className="text-2xl font-bold font-mono tracking-tight" style={{ color: t.text }}>System Settings</h1>
-                <p className="text-xs mt-1" style={{ color: t.text2 }}>Configure live stream thresholds and webhook integrations</p>
-              </div>
-              <Settings size={24} className="text-indigo-500" />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
-              {/* Kafka & DB Config */}
-              <Card t={t} className="space-y-5">
-                <div className="text-xs font-bold tracking-wider uppercase font-mono border-b pb-2" style={{ color: t.text, borderColor: t.border }}>
-                  Orchestrator Settings
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex flex-col gap-2">
-                    <div className="flex justify-between text-xs font-mono font-bold">
-                      <span style={{ color: t.text }}>CBSI Threat Threshold</span>
-                      <span className="text-indigo-500">{kafkaThreshold}</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      min="50" 
-                      max="95" 
-                      value={kafkaThreshold} 
-                      onChange={(e) => setKafkaThreshold(Number(e.target.value))}
-                      className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                    />
-                    <span className="text-[9px]" style={{ color: t.text2 }}>Minimum score required to trigger urgent auditor notifications.</span>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color: t.text2 }}>Maximum Queue Size</label>
-                    <input 
-                      type="number" 
-                      value={maxQueueSize} 
-                      onChange={(e) => setMaxQueueSize(Number(e.target.value))}
-                      className="rounded-xl border px-3.5 py-2 text-xs font-mono outline-none"
-                      style={{ background: t.cardAlt, borderColor: t.border, color: t.text }}
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <div className="flex justify-between text-xs font-mono font-bold">
-                      <span style={{ color: t.text }}>Database Sync Interval</span>
-                      <span className="text-indigo-500">{syncInterval}s</span>
-                    </div>
-                    <input 
-                      type="range" 
-                      min="5" 
-                      max="60" 
-                      value={syncInterval} 
-                      onChange={(e) => setSyncInterval(Number(e.target.value))}
-                      className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                    />
-                  </div>
-                </div>
-              </Card>
-
-              {/* Integrations & Models */}
-              <Card t={t} className="flex flex-col justify-between">
-                <div className="space-y-5">
-                  <div className="text-xs font-bold tracking-wider uppercase font-mono border-b pb-2" style={{ color: t.text, borderColor: t.border }}>
-                    Auditing & Alert Integrations
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs font-bold" style={{ color: t.text }}>Slack Notifications</span>
-                        <span className="text-[10px]" style={{ color: t.text2 }}>Send live audit warnings to #security</span>
-                      </div>
-                      <input 
-                        type="checkbox" 
-                        checked={enableSlackAlerts} 
-                        onChange={(e) => setEnableSlackAlerts(e.target.checked)}
-                        className="w-4 h-4 accent-indigo-500 cursor-pointer"
-                      />
-                    </div>
-
-                    {enableSlackAlerts && (
-                      <div className="flex flex-col gap-2">
-                        <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color: t.text2 }}>Slack Webhook URL</label>
-                        <input 
-                          type="text" 
-                          value={slackWebhookUrl} 
-                          onChange={(e) => setSlackWebhookUrl(e.target.value)}
-                          className="rounded-xl border px-3.5 py-2 text-xs font-mono outline-none"
-                          style={{ background: t.cardAlt, borderColor: t.border, color: t.text }}
-                        />
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs font-bold" style={{ color: t.text }}>Email Digest</span>
-                        <span className="text-[10px]" style={{ color: t.text2 }}>Generate daily threat reports</span>
-                      </div>
-                      <input 
-                        type="checkbox" 
-                        checked={enableEmailAlerts} 
-                        onChange={(e) => setEnableEmailAlerts(e.target.checked)}
-                        className="w-4 h-4 accent-indigo-500 cursor-pointer"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                      <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color: t.text2 }}>Model Risk Weight Profile</label>
-                      <select 
-                        value={selectedModelWeight} 
-                        onChange={(e) => setSelectedModelWeight(e.target.value)}
-                        className="rounded-xl border px-3.5 py-2 text-xs font-bold outline-none cursor-pointer"
-                        style={{ background: t.cardAlt, borderColor: t.border, color: t.text }}
-                      >
-                        <option value="Balanced">Balanced Optimizer</option>
-                        <option value="Aggressive-Audit">Aggressive Audit (High Recall)</option>
-                        <option value="Low-Latency">Low Latency Filter</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => showToast("Configurations successfully saved and synced to Orchestrator.")}
-                  className="w-full py-3 mt-4 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-98 transition-all flex items-center justify-center gap-2 cursor-pointer border-none shadow-md"
-                >
-                  <Lock size={13} />
-                  <span>Save Configuration</span>
-                </button>
-              </Card>
-            </div>
-          </div>
+          <SettingsView
+            t={t}
+            kafkaThreshold={kafkaThreshold}
+            setKafkaThreshold={setKafkaThreshold}
+            maxQueueSize={maxQueueSize}
+            setMaxQueueSize={setMaxQueueSize}
+            syncInterval={syncInterval}
+            setSyncInterval={setSyncInterval}
+            enableSlackAlerts={enableSlackAlerts}
+            setEnableSlackAlerts={setEnableSlackAlerts}
+            slackWebhookUrl={slackWebhookUrl}
+            setSlackWebhookUrl={setSlackWebhookUrl}
+            enableEmailAlerts={enableEmailAlerts}
+            setEnableEmailAlerts={setEnableEmailAlerts}
+            selectedModelWeight={selectedModelWeight}
+            setSelectedModelWeight={setSelectedModelWeight}
+            showToast={showToast}
+          />
         )}
 
         {/* ── FOOTER TELEMETRY ──────────────────────────────── */}

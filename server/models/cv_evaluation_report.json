@@ -1,0 +1,21 @@
+{
+    "model": "XGBClassifier (Agent 1 - BehaviourWatch)",
+    "calibrated_scale_pos_weight": 10.03448275862069,
+    "cross_validation_5fold": {
+        "mean_roc_auc": 1.0,
+        "std_roc_auc": 0.0,
+        "mean_pr_auc": 1.0,
+        "mean_f1": 1.0,
+        "mean_precision": 1.0,
+        "mean_recall": 1.0
+    },
+    "test_set_evaluation": {
+        "true_fraud": 7,
+        "detected_fraud": 7,
+        "false_positives": 0,
+        "recall_percent": 100.0,
+        "precision_percent": 100.0,
+        "roc_auc": 1.0,
+        "pr_auc": 1.0
+    }
+}

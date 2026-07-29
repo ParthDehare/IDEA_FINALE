@@ -101,6 +101,25 @@ def _compute_txn_count_1hr(transaction: dict) -> float:
     return float(transaction.get("txn_count_1hr", 3.0))
 
 
+def _compute_channel_entropy(channel_history: list) -> float:
+    """
+    Compute Shannon Thermodynamic Channel Entropy H_channel (in bits)
+    H = - sum_i P(x_i) * log2(P(x_i))
+    Zero entropy (H = 0) over multiple periods proves identity latching / automated extraction.
+    """
+    if not channel_history:
+        return 0.0
+    from collections import Counter
+    counts = Counter(channel_history)
+    total = len(channel_history)
+    entropy = 0.0
+    for count in counts.values():
+        prob = count / total
+        if prob > 0:
+            entropy -= prob * math.log2(prob)
+    return entropy
+
+
 # ===========================================================================
 # AGENT CLASS
 # ===========================================================================
@@ -274,6 +293,25 @@ class BehaviourWatch:
                 "signal":         "INVALID_INPUT",
                 "reason":         "Transaction payload must be a dictionary."
             }
+
+        # ── SPECIAL DETECTION: Ghost Pensioner (Thermodynamic Channel Entropy H=0) ──
+        acc_type = transaction.get("account_type", "")
+        customer_age = transaction.get("customer_age", 0)
+        channel_history = transaction.get("channel_history", [])
+        if acc_type == "Pension" or customer_age >= 75:
+            if len(channel_history) >= 3:
+                h_channel = _compute_channel_entropy(channel_history)
+                if h_channel == 0.0 and all(c in ("ATM", "AePS") for c in channel_history):
+                    return {
+                        "severity_index": 88,
+                        "signal": "CRITICAL_GHOST_PENSIONER_EXTRACTION",
+                        "reason": (
+                            f"[CRITICAL] Thermodynamic Channel Entropy H_channel={h_channel:.2f} bits "
+                            f"(100% {channel_history[0]} cashout concentration over {len(channel_history)} months). "
+                            f"Zero variance in spending behavior on Age {customer_age} Pension account indicates Ghost Pensioner extraction."
+                        ),
+                        "scoring_method": "SHANNON_ENTROPY",
+                    }
 
         # ── Feature extraction ────────────────────────────────────────────
         emp_class        = str(transaction.get("emp_class",  "DEFAULT")).upper()

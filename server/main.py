@@ -20,8 +20,10 @@ from confluent_kafka import Consumer, KafkaException, KafkaError
 from core.master_orchestrator import MasterOrchestrator
 from core.auth import get_current_user, require_role, decode_jwt, TokenData
 from core.ml_models import ml_models
+from core.secrets_config import secrets
 from api.api_server import router as api_router
 from api.auth_routes import router as auth_router
+from api.feedback_routes import router as feedback_router
 
 # ── Rate Limiter Setup ──
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
@@ -33,9 +35,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Include routers
 app.include_router(api_router,  prefix="/api")
 app.include_router(auth_router, prefix="/api")
+app.include_router(feedback_router, prefix="/api")
 
-# Allow React to connect — explicit origin whitelist for security
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177,http://localhost:5178,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176,http://127.0.0.1:5177,http://127.0.0.1:5178").split(",")
+# Allow React to connect — explicit origin whitelist governed by secrets module
+ALLOWED_ORIGINS = secrets.get_list(
+    "ALLOWED_ORIGINS",
+    default=["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"]
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,9 +59,15 @@ active_connections = []
 main_loop = None  # Store the main event loop
 
 @app.websocket("/ws/alerts")
-async def websocket_endpoint(websocket: WebSocket, token: str = Query(None)):
+async def websocket_endpoint(websocket: WebSocket):
+    # Enforce zero URL query-param token leakage for security.
+    # Read strictly from HttpOnly cookie `vm_token` or Authorization header.
+    token = websocket.cookies.get("vm_token")
     if not token:
-        token = websocket.cookies.get("vm_token")
+        auth_header = websocket.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
@@ -67,7 +79,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None)):
         
     await websocket.accept()
     active_connections.append(websocket)
-    print("React Frontend Connected to WebSockets!")
+    print("React Frontend Connected to WebSockets via Secure Cookie/Header!")
     try:
         while True:
             await websocket.receive_text()
@@ -76,45 +88,55 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None)):
             active_connections.remove(websocket)
         print("React Frontend Disconnected.")
 
-def kafka_listener():
+async def broadcast_to_websockets(data: dict):
+    """Broadcasts a payload to all connected WebSockets gracefully."""
+    dead_connections = []
+    for connection in active_connections:
+        try:
+            await connection.send_json(data)
+        except Exception as e:
+            print(f"[Main] Error sending to websocket: {e}")
+            dead_connections.append(connection)
+            
+    for dead in dead_connections:
+        if dead in active_connections:
+            active_connections.remove(dead)
+
+async def redis_pubsub_listener():
+    """Listens to Redis 'vaultmind:alerts' channel and broadcasts to local WebSocket clients."""
+    from core.db_connections import redis_db
+    if redis_db is None:
+        print("[Main] Redis not connected. Pub/Sub broadcasting will rely on direct local memory callbacks.")
+        return
+
+    pubsub = redis_db.pubsub()
     try:
-        # 1. Consumer setup
-        consumer = Consumer({
-            'bootstrap.servers': os.getenv('KAFKA_BROKER', 'localhost:9092'),
-            'group.id': f'vaultmind-group-{uuid.uuid4()}',
-            'auto.offset.reset': 'latest',
-            'enable.auto.commit': False
-        })
-        consumer.subscribe(['live-transactions'])
-        print("Listening to Kafka Topic with Confluent Kafka...")
-
-        # 2. Main loop with explicit heartbeat
+        await asyncio.to_thread(pubsub.subscribe, "vaultmind:alerts")
+        print("[Main] Subscribed to Redis channel 'vaultmind:alerts' for real-time horizontal WebSocket broadcasting...")
         while True:
-            message = consumer.poll(1.0)
-            if message is None:
-                continue
-            if message.error():
-                print(f"Kafka Error: {message.error()}")
-                continue
-                
-            raw_val = message.value().decode('utf-8')
-            parsed_val = json.loads(raw_val)
-            
-            # Sanitize: Strip out null values so Python .get() defaults work correctly (prevents float(None) crashes)
-            tx = {k: v for k, v in parsed_val.items() if v is not None}
-            print(f"DEBUG: Processing Tx: {tx.get('transaction_id')}")
-            
-            # Send to Orchestrator (Async)
-            future = asyncio.run_coroutine_threadsafe(orchestrator.process_transaction(tx), main_loop)
-            scored_tx = future.result()  # Wait for result
-            
-            # Broadcast to UI
-            if active_connections and main_loop is not None:
-                for connection in active_connections:
-                    asyncio.run_coroutine_threadsafe(connection.send_json(scored_tx), main_loop)
-
+            message = await asyncio.to_thread(pubsub.get_message, ignore_subscribe_messages=True, timeout=1.0)
+            if message and message.get("type") == "message":
+                raw_data = message.get("data")
+                if raw_data:
+                    try:
+                        scored_tx = json.loads(raw_data)
+                        if active_connections:
+                            for connection in list(active_connections):
+                                try:
+                                    await connection.send_json(scored_tx)
+                                except Exception:
+                                    if connection in active_connections:
+                                        active_connections.remove(connection)
+                    except Exception as parse_err:
+                        print(f"[Main] Error handling Pub/Sub message: {parse_err}")
+            await asyncio.sleep(0.05)
     except Exception as e:
-        print(f"Kafka Error: {e}")
+        print(f"[Main] Redis Pub/Sub listener terminated: {e}")
+    finally:
+        try:
+            pubsub.close()
+        except Exception:
+            pass
 
 @app.on_event("startup")
 async def startup_event():
@@ -124,19 +146,66 @@ async def startup_event():
     # Load ML models at startup
     ml_models.load_all()
     
-    # Start the Kafka consumer listener in the background
-    thread = threading.Thread(target=kafka_listener, daemon=True)
-    thread.start()
+    # Start Redis Pub/Sub listener for horizontal WebSocket scalability across worker pods
+    asyncio.create_task(redis_pubsub_listener())
+    
+    # Check whether to run embedded Kafka worker or rely on standalone service
+    if secrets.get("EMBEDDED_KAFKA_CONSUMER", "true").lower() == "true":
+        try:
+            from services.kafka_consumer_service import KafkaConsumerWorker
+            worker = KafkaConsumerWorker()
+            thread = threading.Thread(target=worker.start, args=(main_loop,), daemon=True)
+            thread.start()
+            print("[Main] Started embedded KafkaConsumerWorker in background daemon thread.")
+        except Exception as worker_err:
+            print(f"[Main] Could not start embedded KafkaConsumerWorker: {worker_err}")
+    else:
+        print("[Main] External KafkaConsumerWorker mode (EMBEDDED_KAFKA_CONSUMER=false).")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AUTO KAFKA TRIGGER — called by frontend right after login
 # ─────────────────────────────────────────────────────────────────────────────
+import pandas as pd
+import time
+import os
+
+_demo_task_running = False
+
+async def _demo_stream_loop():
+    global _demo_task_running
+    csv_path = os.path.join(os.path.dirname(__file__), "data", "Testing_data", "live_demo_stream.csv")
+    if not os.path.exists(csv_path):
+        print(f"[Demo] Could not find {csv_path}")
+        _demo_task_running = False
+        return
+        
+    try:
+        df = pd.read_csv(csv_path)
+        while True:
+            for idx, row in df.iterrows():
+                tx = row.where(pd.notnull(row), None).to_dict()
+                tx["transaction_id"] = f"TXN_{int(time.time() * 1000) % 1000000000}"
+                tx["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                try:
+                    await orchestrator.process_transaction(tx)
+                    print(f"[Demo] Processed {tx['transaction_id']}")
+                except Exception as e:
+                    print(f"[Demo] Error processing: {e}")
+                await asyncio.sleep(2)
+    except asyncio.CancelledError:
+        _demo_task_running = False
+    except Exception as e:
+        print(f"[Demo] Stream loop error: {e}")
+        _demo_task_running = False
+
 @app.post("/api/system/start-stream")
 async def start_kafka_stream(current_user=Depends(get_current_user)):
-    """Kafka producer is now managed as a separate service.
-    This endpoint is kept alive for frontend compatibility."""
-    return {"status": "managed_externally", "message": "Kafka producer is managed as a separate service."}
+    global _demo_task_running
+    if not _demo_task_running:
+        _demo_task_running = True
+        asyncio.create_task(_demo_stream_loop())
+    return {"status": "success", "message": "Direct demo data stream started successfully without Kafka."}
 @app.get("/get-next-transaction")
 async def get_next_transaction(current_user: TokenData = Depends(get_current_user)):
     # Retrieve the next transaction from the backend to send to the frontend.

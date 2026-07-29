@@ -1,52 +1,97 @@
-# Welcome to your Expo app 👋
+# VaultMind Mobile Operations Client (React Native / Expo)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+VaultMind Mobile is the enterprise field-operations and command application for real-time insider threat detection, forensic investigation, and active deception monitoring. Built with **React Native (Expo 54)** and **TypeScript**, it interfaces directly with the VaultMind asynchronous backend orchestration engine over secure REST and WebSocket telemetry channels.
 
-## Get started
+---
 
-1. Install dependencies
+## Architecture & Modular Design
 
-   ```bash
-   npm install
-   ```
+To ensure zero downtime, strict maintainability, and clean separation of concerns across SOC analyst workflows, the mobile architecture is modularized into dedicated feature layers:
 
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+mobile/src/
+├── app/
+│   ├── _layout.tsx           # Expo Router Root Stack & Splash Screen Controller
+│   └── index.tsx             # Main App Shell, Auth State Guard, Data Fetching Orchestrator
+├── views/                    # Modularized Field Operations Views
+│   ├── CommandView.tsx       # Command Centre Dashboard (KPIs, Live Activity Stream, Threat Map)
+│   ├── RosterView.tsx        # Employee Roster & Risk Tier Filtering Registry
+│   ├── ProfileView.tsx       # Forensic Profile Search & GraphSAGE Network Inference Visualization
+│   ├── DeceptionView.tsx     # DeceptionGuard Honeypot Radar & Mirage Account Monitor
+│   ├── EvidenceView.tsx      # Evidence Vault & SHA-256 PDF Dossier Generator
+│   └── ModalsView.tsx        # Slide-up Profile Detail & Cyberpunk Fraud Alert Overlays
+├── components/               # Reusable UI Components & Visualizations
+│   ├── CommonUI.tsx          # Sparklines, KPI Cards, Risk Tier Colors, Safe JSON Parser
+│   ├── ThreatMap.tsx         # Geographic India Map Visualization of Active Nodes & Incidents
+│   └── IndiaMapPaths.js      # High-Precision SVG Paths for Geographic Threat Mapping
+├── styles/
+│   └── theme.ts              # Centralized Design Tokens (DARK / LIGHT Themes & StyleSheet Builder)
+└── utils/
+    └── secure_storage.ts     # Expo Secure Store Wrapper (iOS Keychain / Android Keystore)
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-### Other setup steps
+## Core Operational Capabilities
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+### 1. Zero-Trust Security & Storage Wrapper (`secure_storage.ts`)
+* All sensitive session tokens, JWTs, and operational metadata are encrypted at rest using `expo-secure-store` backed by hardware-level OS key stores (**iOS Keychain** and **Android Keystore**).
+* Avoids legacy unencrypted `AsyncStorage` leaks, enforcing strict zero-trust hygiene across mobile sessions.
 
-## Learn more
+### 2. Command Centre & Real-Time Alerting (`CommandView.tsx`)
+* **KPI Metrics Engine**: Real-time evaluation of total scanned transactions, critical alerts (`CBSI ≥ 70`), high-risk flags (`CBSI 50-69`), confirmed fraud cases, and network average scores.
+* **Sparkline Visualizations**: Custom SVG trend indicators showing real-time arrival momentum across active metrics.
+* **Geographic Threat Map**: Interactive India map rendering employee activity origins and active incident hotspots.
 
-To learn more about developing your project with Expo, look at the following resources:
+### 3. Forensic Profile Search & Network Inference (`ProfileView.tsx`)
+* **Interactive Fund Flow Graph**: Visualizes multi-hop financial transactions (`GraphSAGE` node relationships) centered on selected focus employees.
+* **Dynamic Node Styling**: Highlights high-risk core nodes (`CBSI ≥ 70` red pulsation), honeypot targets (`amber` glow), and destination account transaction volumes (`Rs. Lakhs`).
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### 4. DeceptionGuard Honeypot Radar (`DeceptionView.tsx`)
+* **Live Radar Sweeper**: Animated rotating sweeper monitoring active decoy/mirage bank accounts (`EMP_1024_HONEYPOT`, etc.).
+* **Instant Breach Detection**: Immediately highlights breached decoy accounts with visual alerts when unauthorized access attempts occur.
+
+### 5. Evidence Vault & FIU Dossier Generation (`EvidenceView.tsx`)
+* **Forensic Dossier Export**: Triggers backend generation of formal, court-admissible PDF dossiers with SHA-256 integrity hashes.
+* **Immutable Audit Trail**: Tracks hash block signatures and download status directly on mobile devices for SOC compliance.
+
+---
+
+## Getting Started & Deployment
+
+### Prerequisites
+* **Node.js** v18+ and **npm** v9+
+* **Expo CLI** (`npm install -g expo-cli`)
+* **Android Studio** (for Android Emulator) or **Xcode** (for iOS Simulator)
+
+### Installation & Run Commands
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Run TypeScript strict compiler verification (Zero errors guaranteed)
+npx tsc --noEmit
+
+# 3. Start Expo development server
+npm start
+
+# Run specifically for Android Emulator
+npm run android
+
+# Run specifically for iOS Simulator
+npm run ios
+```
+
+---
+
+## Backend Connectivity Configuration
+
+By default, the mobile app connects to your local or staging backend API host. You can dynamically configure the target backend inside the login prompt or by setting `apiHost`:
+
+* **Android Emulator Default**: `http://10.0.2.2:8000` (Maps to host machine localhost)
+* **iOS Simulator / Local Network**: `http://192.168.1.X:8000` (Or your local network IP)
+* **Production / Staging**: Configure HTTPS endpoints directly in the settings panel.
 
 ## Join the community
 

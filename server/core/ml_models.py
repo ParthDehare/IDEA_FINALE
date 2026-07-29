@@ -218,13 +218,28 @@ class MLModelService:
         dwell_val = transaction.get("dwell_time_seconds")
         dwell = float(dwell_val) if dwell_val is not None else 30.0
 
-        if emp_id not in self.account_mapping:
-            return -1   # Unknown entity - fall back to rules
+        # Inductive Runtime Node Enrollment: Register dynamic accounts/entities on the fly
+        if self.account_mapping is None:
+            self.account_mapping = {}
+
+        src_acc = str(transaction.get("account_id") or transaction.get("source_account") or emp_id or "UNKNOWN")
+        dst_acc = str(transaction.get("destination_account") or "UNKNOWN")
+
+        if src_acc != "UNKNOWN" and src_acc not in self.account_mapping:
+            self.account_mapping[src_acc] = len(self.account_mapping)
+        if dst_acc != "UNKNOWN" and dst_acc not in self.account_mapping:
+            self.account_mapping[dst_acc] = len(self.account_mapping)
+        if emp_id != "UNKNOWN" and emp_id not in self.account_mapping:
+            self.account_mapping[emp_id] = len(self.account_mapping)
 
         try:
-            # Node features: 3 dims to match upgraded model (out_deg, in_deg, fraud_rate)
-            # At inference time we don't know true graph stats, so use neutral defaults
-            x = torch.zeros((2, 3), dtype=torch.float32)   # shape (2 nodes, 3 features)
+            # Node features: 3 dims to match upgraded model (out_deg, in_deg, dormancy_factor)
+            from core.historical_state import historical_state
+            src_acc = str(transaction.get("account_id") or transaction.get("source_account") or "UNKNOWN")
+            dst_acc = str(transaction.get("destination_account") or "UNKNOWN")
+            src_vec = historical_state.get_node_feature_vector(src_acc, transaction)
+            dst_vec = historical_state.get_node_feature_vector(dst_acc, transaction)
+            x = torch.tensor([src_vec, dst_vec], dtype=torch.float32)   # shape (2 nodes, 3 features)
 
             edge_index    = torch.tensor([[0], [1]], dtype=torch.long)
             edge_attr_np  = self.edge_scaler.transform(np.array([[amt, dwell]]))

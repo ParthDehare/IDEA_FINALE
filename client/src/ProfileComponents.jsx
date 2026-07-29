@@ -3,6 +3,7 @@ import { Play, BrainCircuit, ShieldAlert, GitMerge } from "lucide-react";
 import { authStore } from "./authStore";
 import { fetchWithAuth } from "./apiService";
 import { motion, AnimatePresence } from "framer-motion";
+import { Badge } from "./components/Badge.jsx";
 
 // --- 1. Forensic Timeline ("CCTV Playback") ---
 export function ForensicTimeline({ events = [], t, theme }) {
@@ -13,10 +14,42 @@ export function ForensicTimeline({ events = [], t, theme }) {
   let displayEvents = events;
   if (events.length === 0) {
     displayEvents = [
-      { time: "02:14 AM", text: "Off-hours system login detected", tier: "WATCH" },
-      { time: "02:17 AM", text: "Escalated DB_GRANT_ACCESS privileges", tier: "HIGH" },
-      { time: "02:22 AM", text: "Initiated SYSTEM_BULK_EXPORT", tier: "CRITICAL" },
-      { time: "02:24 AM", text: "Transfer of Rs.8.5M via RTGS", tier: "CRITICAL" }
+      {
+        time: "02:14 AM",
+        action: "Initiate",
+        tag: "RTGS_OUTWARD",
+        tagVariant: "outline",
+        amount: "Rs. 661,361.98",
+        subtext: "Target A/c: XXXXX9082 (ABC Traders)",
+        tier: "WATCH"
+      },
+      {
+        time: "02:17 AM",
+        action: "Approve",
+        tag: "LOAN_DISBURSEMENT",
+        tagVariant: "outline",
+        amount: "Rs. 654,855.65",
+        subtext: "Sanction ID: LN-2026-88",
+        tier: "HIGH"
+      },
+      {
+        time: "02:22 AM",
+        action: "Override",
+        tag: "LIMIT_ENHANCEMENT",
+        tagVariant: "destructive",
+        amount: "Rs. 50,000,000",
+        subtext: "Bypass Reason: System Flag (CIBIL Low)",
+        tier: "CRITICAL"
+      },
+      {
+        time: "02:24 AM",
+        action: "Transfer",
+        tag: "SWIFT_WIRE",
+        tagVariant: "destructive",
+        amount: "Rs. 8,500,000.00",
+        subtext: "Beneficiary: Offshore Holding Entity (Cayman Islands)",
+        tier: "CRITICAL"
+      }
     ];
   }
 
@@ -54,27 +87,165 @@ export function ForensicTimeline({ events = [], t, theme }) {
         </button>
       </div>
 
-      <div className="pl-4 border-l-2 space-y-4 py-2 relative" style={{ borderColor: t.border }}>
-        <AnimatePresence>
-          {displayEvents.slice(0, visibleCount === 0 && !isPlaying ? displayEvents.length : visibleCount).map((ev, i) => (
-            <motion.div 
-              key={i} 
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="relative"
-            >
-              <div 
-                className={`absolute -left-[23px] w-3 h-3 rounded-full border-[3px] ${
-                  ev.tier === 'CRITICAL' ? 'bg-[#E50914]' : ev.tier === 'HIGH' ? 'bg-[#FFB300]' : 'bg-[#00B4D8]'
-                }`} 
-                style={{ borderColor: t.card }}
-              />
-              <div className="text-xs font-mono mb-0.5" style={{ color: t.text2 }}>{ev.time}</div>
-              <div className="text-sm font-semibold" style={{ color: t.text }}>{ev.text}</div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+      <div className="max-h-[460px] overflow-y-auto pr-2 custom-scrollbar">
+        <div className="pl-4 border-l-2 space-y-5 py-2 relative ml-1" style={{ borderColor: t.border }}>
+          <AnimatePresence>
+            {displayEvents.slice(0, visibleCount === 0 && !isPlaying ? displayEvents.length : visibleCount).map((ev, i) => {
+              let action = ev.action;
+              let tag = ev.tag;
+              let tagVariant = ev.tagVariant || (ev.tier === 'CRITICAL' || ev.tier === 'HIGH' ? 'destructive' : 'outline');
+              let amount = ev.amount;
+              let subtext = ev.subtext;
+
+              if (!action && ev.text) {
+                const parts = ev.text.split(" - ");
+                action = parts[0] || "Execute";
+                amount = parts[1] || "";
+                tag = action.toUpperCase().replace(/[^A-Z0-9]/g, "_") || "SYSTEM_AUDIT";
+                subtext = ev.subtext || `Target A/c: ACC_${Math.floor(Math.random() * 8000 + 1000)}`;
+              }
+
+              return (
+                <motion.div 
+                  key={i} 
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="relative group"
+                >
+                  <div 
+                    className={`absolute -left-[23px] top-1.5 w-3 h-3 rounded-full border-[3px] transition-transform group-hover:scale-125 ${
+                      ev.tier === 'CRITICAL' ? 'bg-[#E50914] shadow-[0_0_8px_rgba(229,9,20,0.6)]' : ev.tier === 'HIGH' ? 'bg-[#FFB300] shadow-[0_0_8px_rgba(255,179,0,0.6)]' : 'bg-[#00B4D8] shadow-[0_0_8px_rgba(0,180,216,0.6)]'
+                    }`} 
+                    style={{ borderColor: t.card }}
+                  />
+                  <div className="text-xs font-mono mb-1 tracking-wider font-medium" style={{ color: t.text2 }}>{ev.time}</div>
+                  
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-semibold leading-relaxed" style={{ color: t.text }}>
+                    <span>{action}</span>
+                    {tag && <Badge variant={tagVariant}>{tag}</Badge>}
+                    {amount && <span className="font-mono">{amount.startsWith('-') || amount.startsWith('Rs.') ? amount : `- ${amount}`}</span>}
+                  </div>
+
+                  {subtext && (
+                    <div className="mt-1.5 text-xs font-mono tracking-tight leading-relaxed space-y-1.5" style={{ color: t.text2 }}>
+                      {(() => {
+                        if (subtext.includes(" [R") || subtext.includes(" | ") || subtext.includes(". [")) {
+                          const parts = subtext.split(/(?=\s*\|\s*\[)|(?=\s*\.\s*\[)|(?=\s*\|\s*(?=[A-Z0-9_]+\]))/g);
+                          return parts.map((part, idx) => {
+                            const cleaned = part.replace(/^[\s\|\.]+|[\s\|]+$/g, "").trim();
+                            if (!cleaned) return null;
+                            const isHeader = idx === 0 && !cleaned.startsWith("[R");
+                            return (
+                              <div 
+                                key={idx} 
+                                className={`flex items-start gap-1.5 rounded p-1 ${isHeader ? 'font-bold text-gray-200 bg-gray-800/40 pb-1.5 border-b border-gray-700/50' : 'pl-2 hover:bg-gray-800/30 transition-colors'}`}
+                              >
+                                {!isHeader && <span className="text-[#E50914] font-bold select-none mt-0.5">•</span>}
+                                <span className="flex-1 break-words">{cleaned}</span>
+                              </div>
+                            );
+                          });
+                        }
+                        if (subtext.includes(" | ") || subtext.includes("\n")) {
+                          return subtext.split(/\|\s*|\n/).map((item, idx) => (
+                            <div key={idx} className="flex items-start gap-1.5">
+                              {idx > 0 && <span className="text-cyan-400 font-bold select-none">•</span>}
+                              <span>{item.trim()}</span>
+                            </div>
+                          ));
+                        }
+                        return <div>{subtext}</div>;
+                      })()}
+                    </div>
+                  )}
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function renderStructuredExplanation(rawText, empId = "SUBJECT", t) {
+  if (!rawText) return null;
+  const str = String(rawText);
+
+  const ctxParts = str.split(/\bContext:\s*/i);
+  const mainBody = (ctxParts[0] || "").trim();
+  const contextText = ctxParts.length > 1 && ctxParts[1].trim() ? `Context: ${ctxParts[1].trim()}` : "";
+
+  let headerReason = mainBody;
+  let breachedRules = [];
+
+  if (mainBody.includes("|")) {
+    const chunks = mainBody.split("|").map(c => c.trim()).filter(Boolean);
+    const firstChunk = chunks[0] || "";
+    const ruleMatch = firstChunk.match(/(\[[R|A]\d+_[A-Z0-9_]+\]|\[[A-Z0-9_]{3,}\]\s*[A-Z0-9])/);
+    if (ruleMatch && ruleMatch.index > 0) {
+      headerReason = firstChunk.substring(0, ruleMatch.index).trim();
+      breachedRules = [firstChunk.substring(ruleMatch.index).trim(), ...chunks.slice(1)];
+    } else if (chunks.length > 1) {
+      headerReason = chunks[0];
+      breachedRules = chunks.slice(1);
+    } else {
+      breachedRules = chunks;
+    }
+  } else {
+    const rulesFound = mainBody.match(/(\[[R|A]\d+_[A-Z0-9_]+\][^|\[]+)/g);
+    if (rulesFound && rulesFound.length > 0) {
+      const firstPos = mainBody.indexOf(rulesFound[0]);
+      if (firstPos > 0) headerReason = mainBody.substring(0, firstPos).trim();
+      breachedRules = rulesFound.map(r => r.trim());
+    }
+  }
+
+  return (
+    <div className="space-y-3 text-xs leading-relaxed font-sans">
+      <div className="p-2.5 rounded border" style={{ background: t?.card || "#1e293b", borderColor: t?.border || "#334155" }}>
+        <div className="font-mono text-[10px] uppercase font-bold tracking-wider mb-1" style={{ color: t?.cyan || "#38bdf8" }}>
+          Offense Narrative — Executive Summary
+        </div>
+        <div className="font-semibold mb-1" style={{ color: t?.text || "#f8fafc" }}>
+          Subject personnel <span className="font-mono text-amber-400">{empId}</span> executed high-risk activities flagged under <span className="text-red-400">UNAUTHORIZED FINANCIAL EXFILTRATION &amp; EMBEZZLEMENT ATTEMPT</span>.
+        </div>
+        <div style={{ color: t?.text2 || "#94a3b8" }}>
+          <b style={{ color: t?.text || "#f8fafc" }}>Primary AI Detection Reason:</b> {headerReason || str}
+        </div>
+      </div>
+
+      {breachedRules.length > 0 && (
+        <div className="p-2.5 rounded border" style={{ background: t?.card || "#1e293b", borderColor: t?.border || "#334155" }}>
+          <div className="font-mono text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: t?.red || "#f87171" }}>
+            Regulatory &amp; System Breaches ({breachedRules.length})
+          </div>
+          <ul className="space-y-1.5 list-disc pl-4" style={{ color: t?.text || "#f8fafc" }}>
+            {breachedRules.map((rule, idx) => {
+              const parts = rule.split("]");
+              const tag = parts.length > 1 ? parts[0] + "]" : "";
+              const body = parts.length > 1 ? parts.slice(1).join("]").trim() : rule;
+              return (
+                <li key={idx}>
+                  {tag && <b className="font-mono text-amber-400 mr-1">{tag}</b>}
+                  <span>{body}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {contextText && (
+        <div className="p-2.5 rounded border border-dashed" style={{ background: t?.cardAlt || "#0f172a", borderColor: t?.border || "#334155" }}>
+          <div className="font-mono text-[10px] uppercase font-bold tracking-wider mb-1" style={{ color: t?.amber || "#fbbf24" }}>
+            AI Risk Context &amp; Escalation Multipliers
+          </div>
+          <div className="italic" style={{ color: t?.text2 || "#94a3b8" }}>
+            {contextText}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -164,9 +335,7 @@ export function GlassBoxEngine({ score = 100, emp_id = "EMP_1024", context = nul
         ) : error ? (
           <p className="text-sm font-mono leading-relaxed text-red-500">{error}</p>
         ) : (
-          <p className="text-sm font-mono leading-relaxed" style={{ color: t.text }}>
-            {explanation}
-          </p>
+          renderStructuredExplanation(explanation, emp_id, t)
         )}
       </div>
     </div>

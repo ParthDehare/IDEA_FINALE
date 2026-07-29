@@ -13,17 +13,14 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from core.db_connections import supabase_db
-
-load_dotenv()
+from core.secrets_config import secrets
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
-JWT_SECRET    = os.getenv("JWT_SECRET")
-if not JWT_SECRET:
-    raise ValueError("FATAL ERROR: JWT_SECRET environment variable is missing. Halting server for security.")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+JWT_SECRET         = secrets.get("JWT_SECRET", required=True)
+JWT_ALGORITHM      = secrets.get("JWT_ALGORITHM", "HS256")
+JWT_EXPIRE_MINUTES = secrets.get_int("JWT_EXPIRE_MINUTES", 60)
 
 # removed passlib context
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")

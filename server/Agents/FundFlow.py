@@ -468,7 +468,17 @@ class FundFlow:
         Returns:
             Tuple of (ghls_score 0–100, analysis_metadata dict)
         """
-        if not source_account or source_account not in self.graph:
+        from core.historical_state import historical_state
+        def get_node_data(acc):
+            live_entry = historical_state.live_adjacency.get(acc, {})
+            static_entry = self.graph.get(acc, {})
+            counterparties = list(set(list(live_entry.get("counterparties", [])) + list(static_entry.get("counterparties", []))))
+            total_flow = live_entry.get("total_flow", 0.0) + static_entry.get("total_flow", 0.0)
+            return {"counterparties": counterparties, "total_flow": total_flow}
+
+        in_live = source_account in historical_state.live_adjacency
+        in_static = source_account in self.graph
+        if not source_account or (not in_live and not in_static):
             return 0.0, {"hops": [], "cycle_detected": False, "source_in_graph": False}
 
         visited: Set[str]      = {source_account}
@@ -478,7 +488,7 @@ class FundFlow:
         cycle_detected    = False
         max_fan_out       = 0
         flow_amplified    = False
-        prev_hop_flow     = self.graph[source_account].get("total_flow", 0.0)
+        prev_hop_flow     = get_node_data(source_account).get("total_flow", 0.0)
         ghls_contributions: List[float] = []
 
         for hop in range(1, MAX_HOP_DEPTH + 1):
@@ -486,7 +496,7 @@ class FundFlow:
             hop_flow = 0.0
 
             for account in frontier:
-                node_data    = self.graph.get(account, {})
+                node_data      = get_node_data(account)
                 counterparties = node_data.get("counterparties", [])
 
                 for cp in counterparties:
@@ -499,7 +509,7 @@ class FundFlow:
                         next_frontier.add(cp)
 
                     # Aggregate flow at this hop
-                    cp_flow = self.graph.get(cp, {}).get("total_flow", 0.0)
+                    cp_flow = get_node_data(cp).get("total_flow", 0.0)
                     hop_flow += cp_flow
 
             # Fan-out width at this hop
@@ -826,21 +836,39 @@ class FundFlow:
         )
 
         # ── 5. Weighted Composite (NRI) ───────────────────────────────────
-        #
-        # NRI = w_irs×IRS + w_ghls×GHLS + w_velas×VelAS
-        #
-        # IRS and GHLS are weighted equally (0.40 each) because both
-        # represent strong, independent fraud vectors — anonymised network
-        # access and money laundering topology are equally concerning.
-        # VelAS (0.20) is a supporting signal — velocity alone can be
-        # explained by legitimate batch operations.
-        #
         nri_raw = (
             WEIGHT_IRS   * irs_score   +
             WEIGHT_GHLS  * ghls_score  +
             WEIGHT_VELAS * velas_score
         )
         nri = int(min(100, max(0, round(nri_raw))))
+
+        # ── 5b. Sequence Pass-Through Velocity check (Lapping / Dormant activation) ──
+        acc_id = str(transaction.get("account_id") or transaction.get("source_account") or transaction.get("destination_account") or source_account).strip()
+        from core.historical_state import historical_state
+        from core.master_orchestrator import MasterOrchestrator
+        seq_meta = historical_state.get_account_sequence_velocity(acc_id, MasterOrchestrator.recent_transactions, transaction)
+
+        pass_through_detected = seq_meta.get("pass_through_detected", False)
+        if pass_through_detected:
+            nri = max(nri, 92)
+
+        # ── 5c. SPECIAL DETECTION: Household Affinity & KCC Evergreening / Loan Flipping ──
+        acc_type = str(transaction.get("account_type", ""))
+        linked_npa_account = transaction.get("linked_npa_account", "")
+        same_household = transaction.get("same_household_affinity", False)
+        if ("KCC" in acc_type or "SHG" in acc_type or "Loan" in acc_type) and linked_npa_account:
+            if same_household or transaction.get("is_evergreening", False):
+                return {
+                    "severity_index": 92,
+                    "signal": "CRITICAL_EVERGREENING_LOAN_FLIP",
+                    "reason": (
+                        f"[CRITICAL] KCC/SHG Evergreening detected via Household Affinity Edge: "
+                        f"New loan disbursement on {acc_id} immediately adjusting NPA account {linked_npa_account} "
+                        f"within same Household/Address cluster."
+                    ),
+                    "scoring_method": "HOUSEHOLD_GRAPH_AFFINITY",
+                }
 
         # ── 6. Signal and reason ──────────────────────────────────────────
         cycle_detected = graph_meta.get("cycle_detected", False)
@@ -857,6 +885,19 @@ class FundFlow:
             velas_score=velas_score, z_vel=z_vel, vel_baseline=vel_baseline,
             tx_count_in_window=tx_count_in_window
         )
+
+        if pass_through_detected:
+            signal = "CRITICAL_PASS_THROUGH_MULE"
+            inflow = seq_meta.get("inflow_amount", 0.0)
+            outflow = seq_meta.get("outflow_amount", 0.0)
+            ratio = seq_meta.get("pass_through_ratio", 0.0)
+            delta = seq_meta.get("time_delta_sec", 0)
+            dormant_txt = "Dormant account " if seq_meta.get("is_dormant") else "Account "
+            reason = (
+                f"[CRITICAL] {dormant_txt}{acc_id} rapid pass-through velocity detected: "
+                f"INR {outflow:,.0f} withdrawn immediately after INR {inflow:,.0f} deposit "
+                f"({ratio*100:.1f}% pass-through within {delta}s). NRI: {nri}/100."
+            )
 
         return {
             "severity_index": nri,
