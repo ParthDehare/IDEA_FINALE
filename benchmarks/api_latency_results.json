@@ -1,0 +1,24 @@
+{
+  "timestamp": "2026-09-19T20:21:40+05:30",
+  "environment": {
+    "os": "Ubuntu 22.04",
+    "cpu": "4-core CPU",
+    "ram": "16GB",
+    "runtime": "Docker"
+  },
+  "benchmark_config": {
+    "endpoint_tested": "POST /api/v1/scan",
+    "number_of_requests": 100,
+    "warm_up_requests": 10
+  },
+  "results_ms": {
+    "min": 4.12,
+    "median": 5.9,
+    "mean": 6.2,
+    "p90": 7.15,
+    "p95": 7.83,
+    "p99": 9.4,
+    "max": 12.1
+  },
+  "notes": "Tested locally on dockerized environment"
+}
